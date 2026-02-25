@@ -1,0 +1,46 @@
+[project]
+name = "ezsxf"
+version = "0.1.0"
+description = "Fast SXF (P21/SFC) parser for Python powered by Rust (PyO3)"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "neka-nat", email = "nekanat.stock@gmail.com" }
+]
+requires-python = ">=3.9"
+dependencies = []
+keywords = ["sxf", "p21", "sfc", "cad", "parser"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+
+[project.optional-dependencies]
+dev = ["maturin>=1.0,<2.0", "pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://github.com/nekanat/ezsxf"
+Repository = "https://github.com/nekanat/ezsxf"
+Issues = "https://github.com/nekanat/ezsxf/issues"
+
+[project.scripts]
+ezsxf = "ezsxf:main"
+
+[tool.maturin]
+module-name = "ezsxf._core"
+python-packages = ["ezsxf"]
+python-source = "src"
+
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"

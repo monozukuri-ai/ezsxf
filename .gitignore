@@ -1,0 +1,14 @@
+target/
+.venv/
+__pycache__/
+*.py[cod]
+*.so
+*.dylib
+*.dll
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+src/ezsxf/_core.abi3.so
