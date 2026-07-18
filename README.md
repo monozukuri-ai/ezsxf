@@ -8,13 +8,19 @@ A fast SXF parser for Python, implemented in Rust with PyO3.
 
 ## Status
 
-This project is in active development. The core parser, strict/lenient modes, typed SFC feature extraction, and real-world sample validation are implemented.
+The SFC parser covers all 34 feature types in the SXF Ver.3.1 SFC specification,
+including resolved drawing/compound-figure/composite-curve structure. The P21
+reader currently exposes the generic Part 21 entity representation.
 
 ## Features
 
 - Parse `P21` and `SFC` from file path, text, or bytes
+- Decode SFC files as UTF-8 or Windows Shift-JIS/CP932 without lossy replacement
 - Strict and lenient parsing modes
-- Structured parse output (`header`, `entities`, `typed_features`, `warnings`)
+- Structured parse output (`header`, `entities`, `typed_features`, `model`, `warnings`)
+- Resolve layer/style code tables, compound-figure placements, and hatch boundaries
+- Decode `ATRF`/`ATRU`/`ATRS` attribute attachments separately from drawing groups
+- Validate compound-figure placement counts, hierarchy, and drawing-group transforms
 - Python API + CLI (`ezsxf` / `python -m ezsxf`)
 
 ## Installation
@@ -36,6 +42,7 @@ import ezsxf
 result = ezsxf.parse_sfc("./data/D0LS004ZSFC/D0LS004Z.SFC", strict=True)
 print(result["format"])          # "sfc"
 print(len(result["typed_features"]))
+print(result["model"]["sheet"]["component_ids"])
 ```
 
 ## CLI

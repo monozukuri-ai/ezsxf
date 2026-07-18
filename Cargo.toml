@@ -16,7 +16,7 @@ include = [
     "/README.md",
     "/LICENSE",
     "/CHANGELOG.md",
-    "/src/lib.rs",
+    "/src/*.rs",
     "/src/ezsxf/__init__.py",
     "/src/ezsxf/__main__.py",
     "/src/ezsxf/_core.pyi",
@@ -32,4 +32,5 @@ crate-type = ["cdylib"]
 [dependencies]
 # "extension-module" tells pyo3 we want to build an extension module (skips linking against libpython.so)
 # "abi3-py39" tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.9
+encoding_rs = "0.8"
 pyo3 = { version = "0.22.4", features = ["extension-module", "abi3-py39"] }
