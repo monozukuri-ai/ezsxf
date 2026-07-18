@@ -2,7 +2,7 @@
 name = "ezsxf"
 version = "0.1.0"
 edition = "2021"
-description = "Fast SXF (P21/SFC) parser for Python powered by Rust (PyO3)"
+description = "Fast SXF parser and drawing converter for Python powered by Rust"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/nekanat/ezsxf"
@@ -19,9 +19,19 @@ include = [
     "/src/*.rs",
     "/src/ezsxf/__init__.py",
     "/src/ezsxf/__main__.py",
+    "/src/ezsxf/_drawing.py",
+    "/src/ezsxf/_drawing_annotations.py",
+    "/src/ezsxf/_drawing_builder.py",
+    "/src/ezsxf/_drawing_geometry.py",
+    "/src/ezsxf/_drawing_hatches.py",
+    "/src/ezsxf/_drawing_style.py",
+    "/src/ezsxf/_dxf.py",
+    "/src/ezsxf/_plot.py",
+    "/src/ezsxf/_p21_drawing.py",
     "/src/ezsxf/_core.pyi",
     "/src/ezsxf/py.typed",
     "/tests/test_python_api.py",
+    "/tests/test_conversion.py",
 ]
 
 [lib]

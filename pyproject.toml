@@ -1,7 +1,7 @@
 [project]
 name = "ezsxf"
 version = "0.1.0"
-description = "Fast SXF (P21/SFC) parser for Python powered by Rust (PyO3)"
+description = "Fast SXF parser and drawing converter for Python powered by Rust"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
@@ -27,6 +27,7 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = ["maturin>=1.0,<2.0", "pytest>=8.0"]
+plot = ["matplotlib>=3.8"]
 
 [project.urls]
 Homepage = "https://github.com/nekanat/ezsxf"
