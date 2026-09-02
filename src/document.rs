@@ -426,6 +426,23 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // 破損ファイルでは末尾の drawing_sheet_feature ごと失われることがある。
+        // 直下要素が回収できているなら合成シートに引き取らせ、描画可能にする
+        // (entity_id=0 は実在しない合成マーカー)。
+        if model.sheet.is_none() && !component_buffer.is_empty() {
+            self.issue_or_error(
+                "sfc-missing-drawing-sheet",
+                format!(
+                    "drawing_sheet_feature is missing; a synthetic sheet adopts the {} recovered top-level features",
+                    component_buffer.len()
+                ),
+            )?;
+            model.sheet = Some(SfcSheetModel {
+                entity_id: 0,
+                component_ids: std::mem::take(&mut component_buffer),
+            });
+        }
+
         let mut attribute_figure_ids = HashMap::<&str, i64>::new();
         for attachment in &model.attribute_attachments {
             if attachment.component_ids.len() != 1 {

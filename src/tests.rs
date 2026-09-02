@@ -1413,3 +1413,63 @@ END-ISO-10303-21;",
         2
     );
 }
+
+#[test]
+fn salvages_damaged_prologue_header_and_trailer_in_lenient_mode() {
+    // 先頭が破損(上書き)されHEADERごと失われたSFC: 最初の/*SXFへ合流して回収する
+    let head_damaged = "\u{fffd}\u{fffd}garbage bytes\u{fffd}\u{fffd}\n\
+/*SXF\n#1 = line_feature('1','2','1','1','0.0','0.0','10.0','10.0')\nSXF*/\n\
+/*SXF\n#99 = drawing_sheet_feature('sheet','9','1','100','300')\nSXF*/\n\
+ENDSEC;\nEND-ISO-10303-21;";
+    let output = parse_sfc_text(head_damaged, false).expect("salvage must recover records");
+    assert_eq!(output.document.entities.len(), 2);
+    assert!(output
+        .warnings
+        .iter()
+        .any(|warning| warning.code == "salvage-prologue"));
+    assert!(parse_sfc_text(head_damaged, true).is_err());
+
+    // トレーラのビット化け: 直前までの要素を保持して警告に落とす
+    let trailer_damaged = format!(
+        "{header}\nDATA;\n/*SXF\n#1 = line_feature('1','2','1','1','0.0','0.0','1.0','1.0')\nSXF*/\n\
+/*SXF\n#99 = drawing_sheet_feature('sheet','9','1','100','300')\nSXF*/\nELDSEC;\nELD-ISK-1030;-61",
+        header = HEADER
+    );
+    let output = parse_sfc_text(&trailer_damaged, false).expect("trailer damage must not reject");
+    assert_eq!(output.document.entities.len(), 2);
+    assert!(output
+        .warnings
+        .iter()
+        .any(|warning| warning.code == "salvage-trailer"));
+    assert!(parse_sfc_text(&trailer_damaged, true).is_err());
+}
+
+#[test]
+fn synthesizes_a_sheet_for_recovered_features_and_accepts_empty_sheet_names() {
+    // 用紙フィーチャごと破損で失われた場合: 合成シートが回収要素を引き取る
+    let missing_sheet = format!(
+        "{header}\nDATA;\n/*SXF\n#1 = line_feature('1','2','1','1','0.0','0.0','10.0','10.0')\nSXF*/\nENDSEC;\nEND-ISO-10303-21;",
+        header = HEADER
+    );
+    let output = parse_sfc_text(&missing_sheet, false).expect("missing sheet must not reject");
+    let model = output.document.sfc_model.as_ref().expect("sfc model");
+    let sheet = model.sheet.as_ref().expect("synthetic sheet");
+    assert_eq!(sheet.entity_id, 0);
+    assert_eq!(sheet.component_ids, vec![1]);
+    assert!(output
+        .warnings
+        .iter()
+        .any(|warning| warning.code == "sfc-missing-drawing-sheet"));
+
+    // 図面名が空のdrawing_sheet_featureを実CADが書き出す: 受理する
+    let empty_name = format!(
+        "{header}\nDATA;\n/*SXF\n#1 = line_feature('1','2','1','1','0.0','0.0','10.0','10.0')\nSXF*/\n\
+/*SXF\n#99 = drawing_sheet_feature('','9','1','100','300')\nSXF*/\nENDSEC;\nEND-ISO-10303-21;",
+        header = HEADER
+    );
+    let output = parse_sfc_text(&empty_name, false).expect("empty sheet name must parse");
+    let model = output.document.sfc_model.as_ref().expect("sfc model");
+    let sheet = model.sheet.as_ref().expect("real sheet");
+    assert_eq!(sheet.entity_id, 99);
+    assert_eq!(sheet.component_ids, vec![1]);
+}

@@ -1,10 +1,23 @@
 //! Part 21/SFC syntax parser and resolved SFC document construction.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use encoding_rs::SHIFT_JIS;
 
 use crate::model::*;
+
+/// 破損入力の読み飛ばし先。前方走査で最初に見つかった構造点に合流する。
+#[derive(Clone, Copy, PartialEq)]
+enum SalvageAnchor {
+    /// 先頭から正常(または HEADER の直前まで復帰)
+    Prologue,
+    Header,
+    Data,
+    Records,
+}
+
+const SALVAGE_WARNING_LIMIT: usize = 50;
 
 #[derive(Clone, Copy)]
 struct Snapshot {
@@ -22,6 +35,7 @@ pub(crate) struct Parser<'a> {
     pub(crate) format: FileFormat,
     strict: bool,
     warnings: Vec<ParseWarning>,
+    salvage_warning_counts: HashMap<String, usize>,
 }
 
 impl<'a> Parser<'a> {
@@ -35,29 +49,135 @@ impl<'a> Parser<'a> {
             format,
             strict,
             warnings: Vec::new(),
+            salvage_warning_counts: HashMap::new(),
         }
     }
 
     fn parse(mut self) -> Result<ParseOutput, ParseError> {
+        // 非strictでは、破損ファイル(先頭上書き・部分暗号化・ビット化け)から
+        // 読める区間を回収する。プロローグ/HEADER/DATAキーワード/トレーラの
+        // 損傷は次のアンカー(HEADER・DATA・最初のレコード)まで読み飛ばし、
+        // レコード列自体は各ループの既存リカバリに任せる。
         self.skip_ws();
-        self.consume_literal_ci("ISO-10303-21")?;
-        self.skip_ws();
-        self.consume_char(';')?;
-        let header = self.parse_header_section()?;
+        let mut anchor = SalvageAnchor::Prologue;
+        let prologue_error = 'prologue: {
+            if let Err(error) = self.consume_literal_ci("ISO-10303-21") {
+                break 'prologue Some(error);
+            }
+            self.skip_ws();
+            if let Err(error) = self.consume_char(';') {
+                break 'prologue Some(error);
+            }
+            None
+        };
+        if let Some(error) = prologue_error {
+            if self.strict {
+                return Err(error);
+            }
+            let Some(found) = self.seek_salvage_anchor() else {
+                return Err(error);
+            };
+            anchor = found;
+            self.push_salvage_warning(
+                "salvage-prologue",
+                "File does not start with ISO-10303-21; leading bytes were skipped \
+                 (corrupted or wrapped input)"
+                    .to_string(),
+            );
+        }
+        let header = if matches!(anchor, SalvageAnchor::Prologue | SalvageAnchor::Header) {
+            match self.parse_header_section() {
+                Ok(header) => header,
+                Err(error) if !self.strict => {
+                    let Some(found) = self.seek_salvage_anchor() else {
+                        return Err(error);
+                    };
+                    anchor = found;
+                    self.push_salvage_warning(
+                        "salvage-header",
+                        format!(
+                            "HEADER section could not be parsed and was skipped: {}",
+                            error.message
+                        ),
+                    );
+                    HeaderSection {
+                        entities: Vec::new(),
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            HeaderSection {
+                entities: Vec::new(),
+            }
+        };
+        if !matches!(anchor, SalvageAnchor::Records) {
+            let data_error = 'data: {
+                self.skip_ws();
+                if let Err(error) = self.consume_keyword_ci("DATA") {
+                    break 'data Some(error);
+                }
+                self.skip_ws();
+                if let Err(error) = self.consume_char(';') {
+                    break 'data Some(error);
+                }
+                None
+            };
+            if let Some(error) = data_error {
+                if self.strict {
+                    return Err(error);
+                }
+                match self.seek_salvage_anchor() {
+                    Some(SalvageAnchor::Records) => {}
+                    Some(SalvageAnchor::Data) => {
+                        self.skip_ws();
+                        self.consume_keyword_ci("DATA")?;
+                        self.skip_ws();
+                        self.consume_char(';')?;
+                    }
+                    _ => return Err(error),
+                }
+                self.push_salvage_warning(
+                    "salvage-data-keyword",
+                    "DATA section keyword was damaged; resumed at the next record".to_string(),
+                );
+            }
+        }
         let entities = match self.format {
-            FileFormat::P21 => self.parse_data_section_p21()?,
-            FileFormat::Sfc => self.parse_data_section_sfc()?,
+            FileFormat::P21 => self.parse_p21_records()?,
+            FileFormat::Sfc => self.parse_sfc_records()?,
         };
         self.skip_ws();
-        self.consume_literal_ci("END-ISO-10303-21")?;
-        self.skip_ws();
-        self.consume_char(';')?;
-        self.skip_ws();
-        if !self.is_eof() {
-            self.issue_or_error(
-                "trailing-data",
-                "Unexpected trailing data after END-ISO-10303-21;".to_string(),
-            )?;
+        let trailer_error = 'trailer: {
+            if let Err(error) = self.consume_literal_ci("END-ISO-10303-21") {
+                break 'trailer Some(error);
+            }
+            self.skip_ws();
+            if let Err(error) = self.consume_char(';') {
+                break 'trailer Some(error);
+            }
+            None
+        };
+        match trailer_error {
+            None => {
+                self.skip_ws();
+                if !self.is_eof() {
+                    self.issue_or_error(
+                        "trailing-data",
+                        "Unexpected trailing data after END-ISO-10303-21;".to_string(),
+                    )?;
+                }
+            }
+            Some(error) if !self.strict => {
+                self.push_salvage_warning(
+                    "salvage-trailer",
+                    format!(
+                        "END-ISO-10303-21; trailer is missing or damaged: {}",
+                        error.message
+                    ),
+                );
+            }
+            Some(error) => return Err(error),
         }
 
         let mut document = ParsedDocument {
@@ -102,12 +222,7 @@ impl<'a> Parser<'a> {
         Ok(HeaderSection { entities })
     }
 
-    fn parse_data_section_p21(&mut self) -> Result<Vec<EntityInstance>, ParseError> {
-        self.skip_ws();
-        self.consume_keyword_ci("DATA")?;
-        self.skip_ws();
-        self.consume_char(';')?;
-
+    fn parse_p21_records(&mut self) -> Result<Vec<EntityInstance>, ParseError> {
         let mut entities = Vec::new();
         loop {
             self.skip_ws();
@@ -116,23 +231,80 @@ impl<'a> Parser<'a> {
                 self.consume_char(';')?;
                 break;
             }
-            entities.push(self.parse_entity_instance(true, None)?);
+            if self.is_eof() {
+                if self.strict {
+                    return Err(self.error_here("Expected keyword ENDSEC".to_string()));
+                }
+                self.push_salvage_warning(
+                    "salvage-endsec",
+                    "DATA section ended without ENDSEC".to_string(),
+                );
+                break;
+            }
+            match self.parse_entity_instance(true, None) {
+                Ok(entity) => entities.push(entity),
+                Err(error) if !self.strict => {
+                    self.push_salvage_warning(
+                        "salvage-record",
+                        format!("Unparseable record skipped: {}", error.message),
+                    );
+                    if !self.seek_next_p21_record_or_endsec() {
+                        self.push_salvage_warning(
+                            "salvage-endsec",
+                            "DATA section ended without ENDSEC".to_string(),
+                        );
+                        break;
+                    }
+                }
+                Err(error) => return Err(error),
+            }
         }
         Ok(entities)
     }
 
-    fn parse_data_section_sfc(&mut self) -> Result<Vec<EntityInstance>, ParseError> {
-        self.skip_ws();
-        self.consume_keyword_ci("DATA")?;
-        self.skip_ws();
-        self.consume_char(';')?;
+    /// Advance to the next plausible record start (a `#` at the beginning of a
+    /// line) or a literal ENDSEC, for damaged-input recovery.
+    fn seek_next_p21_record_or_endsec(&mut self) -> bool {
+        loop {
+            if self.is_eof() {
+                return false;
+            }
+            let snapshot = self.snapshot();
+            if self.try_consume_keyword_ci("ENDSEC") {
+                self.restore(snapshot);
+                return true;
+            }
+            self.restore(snapshot);
+            if self.peek_char() == Some('#')
+                && (self.index == 0
+                    || matches!(
+                        self.chars.get(self.index.wrapping_sub(1)),
+                        Some('\n' | '\r')
+                    ))
+            {
+                return true;
+            }
+            self.advance_char();
+        }
+    }
 
+    fn parse_sfc_records(&mut self) -> Result<Vec<EntityInstance>, ParseError> {
         let mut entities = Vec::new();
         loop {
             self.skip_ws();
             if self.try_consume_keyword_ci("ENDSEC") {
                 self.skip_ws();
                 self.consume_char(';')?;
+                break;
+            }
+            if self.is_eof() {
+                if self.strict {
+                    return Err(self.error_here("Expected keyword ENDSEC".to_string()));
+                }
+                self.push_salvage_warning(
+                    "salvage-endsec",
+                    "DATA section ended without ENDSEC".to_string(),
+                );
                 break;
             }
             let tag = match self.parse_sfc_prefix() {
@@ -223,6 +395,89 @@ impl<'a> Parser<'a> {
             SfcVersionTag::V31 => "SXF3.1*/",
         };
         self.seek_literal_ci(suffix)
+    }
+
+    /// 現在位置から前方走査し、最初に見つかる構造点(HEADER;/DATA;/レコード開始/
+    /// ENDSEC)に位置を合わせる。見つからなければ None(位置はEOF)。
+    fn seek_salvage_anchor(&mut self) -> Option<SalvageAnchor> {
+        loop {
+            if self.is_eof() {
+                return None;
+            }
+            let at_word_boundary = self.index == 0
+                || !self
+                    .chars
+                    .get(self.index.wrapping_sub(1))
+                    .copied()
+                    .is_some_and(is_keyword_char);
+            if at_word_boundary {
+                let snapshot = self.snapshot();
+                if self.try_consume_keyword_ci("HEADER") {
+                    self.skip_ws();
+                    let followed_by_semicolon = self.peek_char() == Some(';');
+                    self.restore(snapshot);
+                    if followed_by_semicolon {
+                        return Some(SalvageAnchor::Header);
+                    }
+                } else if self.try_consume_keyword_ci("DATA") {
+                    self.skip_ws();
+                    let followed_by_semicolon = self.peek_char() == Some(';');
+                    self.restore(snapshot);
+                    if followed_by_semicolon {
+                        return Some(SalvageAnchor::Data);
+                    }
+                } else if self.try_consume_keyword_ci("ENDSEC") {
+                    self.restore(snapshot);
+                    return Some(SalvageAnchor::Records);
+                } else {
+                    self.restore(snapshot);
+                }
+            }
+            match self.format {
+                FileFormat::Sfc => {
+                    let snapshot = self.snapshot();
+                    if self.try_consume_literal_ci("/*SXF") {
+                        self.restore(snapshot);
+                        return Some(SalvageAnchor::Records);
+                    }
+                    self.restore(snapshot);
+                }
+                FileFormat::P21 => {
+                    if self.peek_char() == Some('#')
+                        && (self.index == 0
+                            || matches!(
+                                self.chars.get(self.index.wrapping_sub(1)),
+                                Some('\n' | '\r')
+                            ))
+                        && self
+                            .chars
+                            .get(self.index + 1)
+                            .copied()
+                            .is_some_and(|ch| ch.is_ascii_digit())
+                    {
+                        return Some(SalvageAnchor::Records);
+                    }
+                }
+            }
+            self.advance_char();
+        }
+    }
+
+    /// 同一codeのサルベージ警告は上限で打ち切り、洪水を防ぐ。
+    fn push_salvage_warning(&mut self, code: &str, message: String) {
+        let count = self
+            .salvage_warning_counts
+            .entry(code.to_string())
+            .or_insert(0);
+        *count += 1;
+        if *count <= SALVAGE_WARNING_LIMIT {
+            self.push_warning(code, message);
+        } else if *count == SALVAGE_WARNING_LIMIT + 1 {
+            self.push_warning(
+                code,
+                "further identical salvage warnings suppressed".to_string(),
+            );
+        }
     }
 
     fn seek_next_sfc_prefix_or_endsec(&mut self) -> bool {
@@ -1014,6 +1269,14 @@ pub(crate) fn decode_bytes(
                 }),
             ))
         }
+        Err(_) if !strict => Ok((
+            String::from_utf8_lossy(bytes).into_owned(),
+            Some(ParseWarning {
+                code: "encoding".to_string(),
+                message: "Input contained invalid UTF-8 byte sequences and was decoded with replacement characters."
+                    .to_string(),
+            }),
+        )),
         Err(_) => Err(ParseError::new("Input is not valid UTF-8", 1, 1, "")),
     }
 }

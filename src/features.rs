@@ -1037,7 +1037,9 @@ pub(crate) fn validate_typed_feature_values(feature: &TypedFeature) -> Result<()
             )?;
         }
         TypedFeature::DrawingSheet(value) => {
-            validate_sfc_semantic_string(&value.name, "sheet name", false)?;
+            // 実CADには図面名を空で書き出すものがある。描画に名前は不要なので
+            // 空を許容する(文字数・文字集合の検証は維持)
+            validate_sfc_semantic_string(&value.name, "sheet name", true)?;
             ensure(
                 matches!(value.sheet_type, 0..=4 | 9),
                 "sheet type must be 0..4 or 9 (FREE)",
