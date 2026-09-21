@@ -29,11 +29,35 @@ class RenderStyle:
 
 
 @dataclass(frozen=True)
+class CurveGeometry:
+    """Exact form of a circular or elliptical path in drawing coordinates.
+
+    The path is ``center + axis_u * cos(t) + axis_v * sin(t)`` with ``t`` running
+    from ``start_param`` to ``end_param`` in radians; ``end_param < start_param``
+    means the path runs with decreasing ``t``. ``axis_u`` and ``axis_v`` are
+    conjugate semi-diameters: a compound-figure placement with unequal X/Y ratios
+    turns a circle into an ellipse and can leave the two vectors neither equal in
+    length nor perpendicular. ``PathPrimitive.points`` samples exactly this curve.
+    """
+
+    kind: str
+    center: Point
+    axis_u: Point
+    axis_v: Point
+    start_param: float
+    end_param: float
+    closed: bool
+
+
+@dataclass(frozen=True)
 class PathPrimitive:
     points: Tuple[Point, ...]
     closed: bool
     style: RenderStyle
     source_id: int
+    # Present for circle / arc / ellipse / ellipse_arc sources so that backends
+    # can emit a true curve instead of the sampled ``points``.
+    curve: Optional[CurveGeometry] = None
 
 
 @dataclass(frozen=True)

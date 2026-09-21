@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from ezsxf._drawing import (
     Affine,
     Color,
+    CurveGeometry,
     Drawing,
     FillPrimitive,
     MarkerPrimitive,
@@ -26,10 +27,12 @@ from ezsxf._drawing_geometry import (
     apply_vector,
     average_scale,
     clip_hatch_lines,
+    arc_sweep_deg,
     compose,
     near,
     sample_arc,
     sample_ellipse,
+    transform_curve,
     without_duplicate_end,
 )
 from ezsxf._drawing_style import _COLOR_NAMES
@@ -66,6 +69,8 @@ class P21DrawingBuilder:
         self.hidden: Set[int] = set()
         self.sheet_items: List[int] = []
         self._geometry_cache: Dict[int, List[Geometry]] = {}
+        # Exact curve of entities whose geometry is one circle/ellipse/circular arc.
+        self._curve_cache: Dict[int, CurveGeometry] = {}
         self._style_cache: Dict[Tuple[int, ...], _StyleValues] = {}
         self._text_keys: Set[Tuple[Any, ...]] = set()
         self._warning_keys: Set[str] = set()
@@ -391,7 +396,12 @@ class P21DrawingBuilder:
         transform: Affine,
         source_id: int,
     ) -> None:
-        for points, closed in self._geometry(geometry_id):
+        geometry = self._geometry(geometry_id)
+        local_curve = self._curve_cache.get(geometry_id) if len(geometry) == 1 else None
+        curve = (
+            transform_curve(transform, local_curve) if local_curve is not None else None
+        )
+        for points, closed in geometry:
             transformed = tuple(apply(transform, point) for point in points)
             if len(transformed) < 2:
                 continue
@@ -401,6 +411,7 @@ class P21DrawingBuilder:
                     closed=closed,
                     style=style,
                     source_id=source_id,
+                    curve=curve,
                 )
             )
 
@@ -872,6 +883,9 @@ class P21DrawingBuilder:
                         closed=True,
                     )
                     geometry = [(points, True)]
+                    self._curve_cache[entity_id] = _full_ellipse_curve(
+                        "circle", center, float(params[2]), float(params[2]), rotation
+                    )
 
         ellipse = records.get("ELLIPSE")
         if ellipse is not None:
@@ -894,10 +908,13 @@ class P21DrawingBuilder:
                         closed=True,
                     )
                     geometry = [(points, True)]
+                    self._curve_cache[entity_id] = _full_ellipse_curve(
+                        "ellipse", center, float(params[2]), float(params[3]), rotation
+                    )
 
         trimmed = records.get("TRIMMED_CURVE")
         if trimmed is not None:
-            geometry = self._trimmed_curve(trimmed)
+            geometry = self._trimmed_curve(trimmed, entity_id)
 
         composite = records.get("COMPOSITE_CURVE")
         if composite is not None:
@@ -931,7 +948,9 @@ class P21DrawingBuilder:
         self._geometry_cache[entity_id] = geometry
         return geometry
 
-    def _trimmed_curve(self, record: Mapping[str, Any]) -> List[Geometry]:
+    def _trimmed_curve(
+        self, record: Mapping[str, Any], entity_id: Optional[int] = None
+    ) -> List[Geometry]:
         params = record.get("parameters", [])
         if len(params) < 6:
             return []
@@ -970,14 +989,26 @@ class P21DrawingBuilder:
             end_angle = round(math.degrees(end + rotation), 10)
             counter_clockwise_sweep = (end_angle - start_angle) % 360.0
             direction_flag = 0 if counter_clockwise_sweep <= 180.0 else 1
+            radius = float(circle_params[2])
             points = sample_arc(
                 center,
-                float(circle_params[2]),
+                radius,
                 start_angle,
                 end_angle,
                 direction_flag,
                 self.curve_segments,
             )
+            if entity_id is not None:
+                sweep = arc_sweep_deg(start_angle, end_angle, direction_flag)
+                self._curve_cache[entity_id] = CurveGeometry(
+                    kind="arc",
+                    center=center,
+                    axis_u=(radius, 0.0),
+                    axis_v=(0.0, radius),
+                    start_param=math.radians(start_angle),
+                    end_param=math.radians(start_angle + sweep),
+                    closed=False,
+                )
             return [(points, False)]
         return []
 
@@ -1047,6 +1078,27 @@ class P21DrawingBuilder:
             return 0.0
         vector_params = vector.get("parameters", [])
         return abs(float(vector_params[2])) if len(vector_params) >= 3 else 0.0
+
+
+def _full_ellipse_curve(
+    kind: str,
+    center: Point,
+    radius_x: float,
+    radius_y: float,
+    rotation_deg: float,
+) -> CurveGeometry:
+    """Exact curve matching ``sample_ellipse(..., 0, 360, closed=True)``."""
+
+    rotation = math.radians(rotation_deg)
+    return CurveGeometry(
+        kind=kind,
+        center=center,
+        axis_u=(radius_x * math.cos(rotation), radius_x * math.sin(rotation)),
+        axis_v=(-radius_y * math.sin(rotation), radius_y * math.cos(rotation)),
+        start_param=0.0,
+        end_param=2.0 * math.pi,
+        closed=True,
+    )
 
 
 def decode_step_string(value: str) -> str:

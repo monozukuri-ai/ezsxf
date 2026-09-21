@@ -23,8 +23,10 @@ from ezsxf._drawing_geometry import (
     apply_vector,
     average_scale,
     compose,
+    feature_curve,
     feature_geometry,
     point,
+    transform_curve,
 )
 from ezsxf._drawing_hatches import render_hatch
 from ezsxf._drawing_style import StyleResolver, optional_int
@@ -194,6 +196,12 @@ class DrawingBuilder:
         )
         geometries = self.simple_geometry(feature)
         if geometries is not None:
+            local_curve = feature_curve(feature) if len(geometries) == 1 else None
+            curve = (
+                transform_curve(transform, local_curve)
+                if local_curve is not None
+                else None
+            )
             for points, closed in geometries:
                 if len(points) >= 2:
                     self.drawing.paths.append(
@@ -202,6 +210,7 @@ class DrawingBuilder:
                             closed=closed,
                             style=style,
                             source_id=feature_id,
+                            curve=curve,
                         )
                     )
             return

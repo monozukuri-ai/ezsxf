@@ -6,7 +6,7 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any, Callable, List, Optional, Tuple
 
-from ezsxf._drawing import Affine, Point
+from ezsxf._drawing import Affine, CurveGeometry, Point
 
 IDENTITY: Affine = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 Geometry = Tuple[List[Point], bool]
@@ -117,6 +117,100 @@ def feature_geometry(
     return None
 
 
+def arc_sweep_deg(
+    start_angle_deg: float, end_angle_deg: float, direction_flag: int
+) -> float:
+    """Signed sweep of an SXF arc: positive counter-clockwise, never zero."""
+
+    if direction_flag == 1:
+        sweep = -((start_angle_deg - end_angle_deg) % 360.0)
+    else:
+        sweep = (end_angle_deg - start_angle_deg) % 360.0
+    if abs(sweep) <= 1.0e-12:
+        sweep = -360.0 if direction_flag == 1 else 360.0
+    return sweep
+
+
+def feature_curve(feature: Mapping[str, Any]) -> Optional[CurveGeometry]:
+    """Exact curve of a circle/arc/ellipse feature in its own coordinates.
+
+    The parameterisation matches :func:`feature_geometry`, so the sampled points
+    lie on the returned curve in the same order.
+    """
+
+    kind = feature.get("kind")
+    if kind == "circle":
+        radius = float(feature["radius"])
+        return CurveGeometry(
+            kind="circle",
+            center=point(feature["center"]),
+            axis_u=(radius, 0.0),
+            axis_v=(0.0, radius),
+            start_param=0.0,
+            end_param=2.0 * math.pi,
+            closed=True,
+        )
+    if kind == "arc":
+        radius = float(feature["radius"])
+        start = float(feature["start_angle_deg"])
+        sweep = arc_sweep_deg(
+            start, float(feature["end_angle_deg"]), int(feature["direction_flag"])
+        )
+        return CurveGeometry(
+            kind="arc",
+            center=point(feature["center"]),
+            axis_u=(radius, 0.0),
+            axis_v=(0.0, radius),
+            start_param=math.radians(start),
+            end_param=math.radians(start + sweep),
+            closed=False,
+        )
+    if kind in ("ellipse", "ellipse_arc"):
+        radius_x = float(feature["radius_x"])
+        radius_y = float(feature["radius_y"])
+        rotation = math.radians(float(feature["rotation_angle_deg"]))
+        axis_u = (radius_x * math.cos(rotation), radius_x * math.sin(rotation))
+        axis_v = (-radius_y * math.sin(rotation), radius_y * math.cos(rotation))
+        if kind == "ellipse":
+            return CurveGeometry(
+                kind="ellipse",
+                center=point(feature["center"]),
+                axis_u=axis_u,
+                axis_v=axis_v,
+                start_param=0.0,
+                end_param=2.0 * math.pi,
+                closed=True,
+            )
+        start = float(feature["start_angle_deg"])
+        sweep = arc_sweep_deg(
+            start, float(feature["end_angle_deg"]), int(feature["direction_flag"])
+        )
+        return CurveGeometry(
+            kind="ellipse_arc",
+            center=point(feature["center"]),
+            axis_u=axis_u,
+            axis_v=axis_v,
+            start_param=math.radians(start),
+            end_param=math.radians(start + sweep),
+            closed=False,
+        )
+    return None
+
+
+def transform_curve(transform: Affine, curve: CurveGeometry) -> CurveGeometry:
+    """Apply an affine placement; conjugate semi-diameters map linearly."""
+
+    return CurveGeometry(
+        kind=curve.kind,
+        center=apply(transform, curve.center),
+        axis_u=apply_vector(transform, curve.axis_u),
+        axis_v=apply_vector(transform, curve.axis_v),
+        start_param=curve.start_param,
+        end_param=curve.end_param,
+        closed=curve.closed,
+    )
+
+
 def sample_arc(
     center: Point,
     radius: float,
@@ -125,12 +219,7 @@ def sample_arc(
     direction_flag: int,
     curve_segments: int,
 ) -> List[Point]:
-    if direction_flag == 1:
-        sweep = -((start_angle_deg - end_angle_deg) % 360.0)
-    else:
-        sweep = (end_angle_deg - start_angle_deg) % 360.0
-    if abs(sweep) <= 1.0e-12:
-        sweep = -360.0 if direction_flag == 1 else 360.0
+    sweep = arc_sweep_deg(start_angle_deg, end_angle_deg, direction_flag)
     count = max(2, int(math.ceil(curve_segments * abs(sweep) / 360.0)))
     return [
         (
@@ -158,11 +247,8 @@ def sample_ellipse(
     if closed:
         sweep = 360.0
         count = curve_segments
-    elif direction_flag == 1:
-        sweep = -((start_angle_deg - end_angle_deg) % 360.0) or -360.0
-        count = max(2, int(math.ceil(curve_segments * abs(sweep) / 360.0)))
     else:
-        sweep = (end_angle_deg - start_angle_deg) % 360.0 or 360.0
+        sweep = arc_sweep_deg(start_angle_deg, end_angle_deg, direction_flag)
         count = max(2, int(math.ceil(curve_segments * abs(sweep) / 360.0)))
     rotation = math.radians(rotation_angle_deg)
     cos_rotation = math.cos(rotation)
@@ -395,12 +481,15 @@ __all__ = [
     "average_scale",
     "clip_hatch_lines",
     "compose",
+    "arc_sweep_deg",
     "distance",
     "dot",
+    "feature_curve",
     "feature_geometry",
     "near",
     "point",
     "sample_arc",
     "subtract",
+    "transform_curve",
     "without_duplicate_end",
 ]

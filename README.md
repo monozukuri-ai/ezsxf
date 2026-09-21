@@ -142,6 +142,14 @@ Both backends share the same hierarchy, placement, layer, color, line type,
 line width, text, dimension, and hatch conversion. Curves are converted to
 polylines; use `curve_segments` to control the approximation resolution.
 
+Converters that need true curves can read `PathPrimitive.curve`
+(`CurveGeometry`): for circle, arc, ellipse and elliptical-arc sources it holds
+the exact curve behind the sampled `points`, already transformed through
+compound-figure placements. The curve is `center + axis_u*cos(t) + axis_v*sin(t)`
+for `t` from `start_param` to `end_param`; `axis_u`/`axis_v` are conjugate
+semi-diameters, so a circle placed with unequal X/Y ratios is reported as the
+ellipse it becomes.
+
 Drawing conversion currently targets SFC input. Externally defined symbols are
 shown as insertion markers, while externally defined and tiled hatch patterns
 retain only boundaries marked visible by the SXF data.

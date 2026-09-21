@@ -120,7 +120,117 @@ DRAWING_P21 = textwrap.dedent(
 )
 
 
+_SHEET_FEATURE = """/*SXF
+#99 = drawing_sheet_feature('sheet','9','1','100','300')
+SXF*/
+"""
+_CURVE_FEATURES = """/*SXF
+#81 = arc_feature('1','2','1','3','10','10','5','0','30','120')
+SXF*/
+/*SXF
+#82 = arc_feature('1','2','1','3','10','10','5','1','30','120')
+SXF*/
+/*SXF
+#83 = ellipse_feature('1','2','1','3','0','0','4','2','30')
+SXF*/
+/*SXF
+#84 = ellipse_arc_feature('1','2','1','3','0','0','4','2','1','30','10','200')
+SXF*/
+/*SXF
+#85 = arc_feature('1','2','1','3','10','10','5','0','45','45')
+SXF*/
+"""
+assert _SHEET_FEATURE in DRAWING_SFC
+CURVES_SFC = DRAWING_SFC.replace(_SHEET_FEATURE, _CURVE_FEATURES + _SHEET_FEATURE)
+
+
+_P21_SHEET = "#31=DRAWING_SHEET_REVISION('sheet',(#18,#27),#30);"
+_P21_CURVES = """#40=CARTESIAN_POINT(' ',(10.0,10.0));
+#41=AXIS2_PLACEMENT_2D(' ',#40,#12);
+#42=CIRCLE(' ',#41,5.0);
+#43=TRIMMED_CURVE(' ',#42,(PARAMETER_VALUE(0.5235987755982988)),
+    (PARAMETER_VALUE(2.0943951023931953)),.T.,.PARAMETER.);
+#44=PRESENTATION_STYLE_ASSIGNMENT((#16));
+#45=(ANNOTATION_CURVE_OCCURRENCE() ANNOTATION_OCCURRENCE()
+    DRAUGHTING_ANNOTATION_OCCURRENCE() GEOMETRIC_REPRESENTATION_ITEM()
+    REPRESENTATION_ITEM(' ') STYLED_ITEM((#44),#42));
+#46=PRESENTATION_STYLE_ASSIGNMENT((#16));
+#47=(ANNOTATION_CURVE_OCCURRENCE() ANNOTATION_OCCURRENCE()
+    DRAUGHTING_ANNOTATION_OCCURRENCE() GEOMETRIC_REPRESENTATION_ITEM()
+    REPRESENTATION_ITEM(' ') STYLED_ITEM((#46),#43));
+#31=DRAWING_SHEET_REVISION('sheet',(#18,#27,#45,#47),#30);"""
+assert _P21_SHEET in DRAWING_P21
+CURVES_P21 = DRAWING_P21.replace(_P21_SHEET, _P21_CURVES)
+
+
+def _assert_points_on_curve(case: unittest.TestCase, path: object) -> None:
+    """The sampled points must lie on the exact curve, in parameter order."""
+
+    import math
+
+    curve = path.curve  # type: ignore[attr-defined]
+    points = path.points  # type: ignore[attr-defined]
+    case.assertIsNotNone(curve)
+    sweep = curve.end_param - curve.start_param
+    steps = len(points) if curve.closed else len(points) - 1
+    for index, (x, y) in enumerate(points):
+        t = curve.start_param + sweep * index / steps
+        expected_x = (
+            curve.center[0] + curve.axis_u[0] * math.cos(t) + curve.axis_v[0] * math.sin(t)
+        )
+        expected_y = (
+            curve.center[1] + curve.axis_u[1] * math.cos(t) + curve.axis_v[1] * math.sin(t)
+        )
+        case.assertAlmostEqual(x, expected_x, places=9)
+        case.assertAlmostEqual(y, expected_y, places=9)
+
+
 class DrawingConversionTest(unittest.TestCase):
+    def test_p21_circles_and_trimmed_arcs_carry_their_exact_curve(self) -> None:
+        import math
+
+        drawing = build_drawing(CURVES_P21, curve_segments=16)
+        curved = [path for path in drawing.paths if path.curve is not None]
+        self.assertEqual(sorted(path.curve.kind for path in curved), ["arc", "circle"])
+        for path in curved:
+            self.assertAlmostEqual(path.curve.center[0], 10.0)
+            self.assertAlmostEqual(math.hypot(*path.curve.axis_u), 5.0)
+            _assert_points_on_curve(self, path)
+        arc = next(path.curve for path in curved if path.curve.kind == "arc")
+        self.assertAlmostEqual(arc.start_param, math.radians(30.0))
+        self.assertAlmostEqual(arc.end_param, math.radians(120.0))
+        # 線分(TRIMMED_CURVE+LINE)には付かない
+        self.assertEqual(sum(1 for path in drawing.paths if path.curve is None), 1)
+
+    def test_curved_paths_carry_their_exact_curve(self) -> None:
+        import math
+
+        drawing = build_drawing(CURVES_SFC, curve_segments=16)
+        by_id = {path.source_id: path for path in drawing.paths}
+
+        ccw = by_id[81].curve
+        self.assertEqual((ccw.kind, ccw.closed), ("arc", False))
+        self.assertAlmostEqual(ccw.start_param, math.radians(30.0))
+        self.assertAlmostEqual(ccw.end_param, math.radians(120.0))
+        # 時計回り(direction=1)は 30度 から -240度 へ減少する
+        cw = by_id[82].curve
+        self.assertAlmostEqual(cw.start_param, math.radians(30.0))
+        self.assertAlmostEqual(cw.end_param, math.radians(30.0 - 270.0))
+        ellipse = by_id[83].curve
+        self.assertEqual((ellipse.kind, ellipse.closed), ("ellipse", True))
+        self.assertAlmostEqual(math.hypot(*ellipse.axis_u), 4.0)
+        self.assertAlmostEqual(math.hypot(*ellipse.axis_v), 2.0)
+        ellipse_arc = by_id[84].curve
+        self.assertEqual(ellipse_arc.kind, "ellipse_arc")
+        self.assertLess(ellipse_arc.end_param, ellipse_arc.start_param)
+        # 始角=終角は全周
+        full = by_id[85].curve
+        self.assertAlmostEqual(abs(full.end_param - full.start_param), 2.0 * math.pi)
+        for source_id in (81, 82, 83, 84, 85):
+            _assert_points_on_curve(self, by_id[source_id])
+        # 折線・線分には付かない
+        self.assertIsNone(by_id[10].curve)
+
     def test_build_drawing_flattens_compound_figure_transform(self) -> None:
         drawing = build_drawing(DRAWING_SFC, curve_segments=16)
 
@@ -136,6 +246,19 @@ class DrawingConversionTest(unittest.TestCase):
         circle = next(path for path in drawing.paths if path.source_id == 20)
         self.assertTrue(circle.closed)
         self.assertEqual(len(circle.points), 16)
+        # 90度回転・X倍率2の複合図形配置で、円は軸 (0,2)/(-1,0) の楕円になる
+        curve = circle.curve
+        self.assertIsNotNone(curve)
+        self.assertEqual(curve.kind, "circle")
+        self.assertTrue(curve.closed)
+        self.assertAlmostEqual(curve.center[0], 8.0)
+        self.assertAlmostEqual(curve.center[1], 24.0)
+        self.assertAlmostEqual(curve.axis_u[0], 0.0)
+        self.assertAlmostEqual(curve.axis_u[1], 2.0)
+        self.assertAlmostEqual(curve.axis_v[0], -1.0)
+        self.assertAlmostEqual(curve.axis_v[1], 0.0)
+        _assert_points_on_curve(self, circle)
+        self.assertIsNone(line.curve)
         self.assertEqual(len(drawing.fills), 1)
         self.assertEqual(drawing.texts[0].text, "DXF")
 
