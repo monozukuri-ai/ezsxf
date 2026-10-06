@@ -37,6 +37,7 @@ public class CadUI {
     [DllImport("user32.dll")] public static extern int GetDlgCtrlID(IntPtr h);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);
+    [DllImport("kernel32.dll")] public static extern uint GetACP();
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out Rect r);
     public struct Rect { public int Left, Top, Right, Bottom; }
     public static string Text(IntPtr h) { var b=new StringBuilder(2048); if(Class(h)=="Edit") SendMessage(h,0xD,(IntPtr)b.Capacity,b); else GetWindowText(h,b,b.Capacity); return b.ToString(); }
@@ -156,12 +157,12 @@ function Save-Cad([string]$stem, [string]$extension, [string]$previous='') {
     [void](Snapshot $script:process ($stem+'-saved'))
     return $path
 }
-$report = @{version=$Version; platform=[Environment]::OSVersion.VersionString; native_windows=$true; mode='save, overwrite and reopen'; cases=@(); complete=$false}
+$report = @{version=$Version; platform=[Environment]::OSVersion.VersionString; ansi_codepage=[CadUI]::GetACP(); culture=[Globalization.CultureInfo]::CurrentCulture.Name; native_windows=$true; mode='save, overwrite and reopen'; cases=@(); complete=$false}
 $process = $null
 try {
     $pin = $pins[$Version]
     $installer = Join-Path $runtime $pin[0]
-    & curl.exe --fail --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output $installer ('https://www.jwcad.net/download/' + $pin[0])
+    & curl.exe --ipv4 --fail --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output $installer ('https://www.jwcad.net/download/' + $pin[0])
     if ($LASTEXITCODE -ne 0) { throw 'Official installer download failed.' }
     $hash=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($hash -ne $pin[1]) { throw 'The official installer hash changed.' }
@@ -201,11 +202,16 @@ try {
         } catch {
             $result.error=$_.Exception.Message
             if ($null -ne $process -and -not $process.HasExited) { [void](Snapshot $process ($case.id+'-failure')) }
-            $partial=Join-Path $app ($case.id+'_native.sfc')
-            if (Test-Path $partial) { Copy-Item $partial (Join-Path $evidence 'failed-output.sfc') }
         } finally {
-            if ($null -ne $process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+            if ($null -ne $process -and -not $process.HasExited) {
+                Stop-Process -Id $process.Id -Force
+                [void]$process.WaitForExit(15000)
+            }
             $process=$null
+            if (-not $result.cad_save_completed) {
+                $partial=Join-Path $app ($case.id+'_native.sfc')
+                if (Test-Path $partial) { Copy-Item $partial (Join-Path $evidence 'failed-output.sfc') }
+            }
             $result.source_unchanged=((Get-FileHash $input -Algorithm SHA256).Hash -eq $before)
             $result.files_sha256=@{}
             foreach ($file in Get-ChildItem $evidence -File) { $result.files_sha256[$file.Name]=(Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }

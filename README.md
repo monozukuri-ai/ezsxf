@@ -147,7 +147,7 @@ line_id = doc.add_line((0, 0), (100, 50), layer=layer)
 doc.add_circle((50, 50), 10)
 doc.add_arc((80, 50), 10, 0, 90)  # angles in degrees
 doc.add_polyline([(0, 0), (10, 0), (10, 10)])
-doc.add_text("SXF 日本語", (10, 80), height=3.5, width=3.5)
+doc.add_text("SXF 日本語", (10, 80), height=3.5, width=24)
 doc.update_element(line_id, end_x=120.125, color=2)
 doc.save("created.sfc")
 
@@ -160,6 +160,7 @@ existing.save("created.sfc")
 `new_sfc` creates a free-size sheet in millimetres, layer code 1 and text-font
 code 1. `timestamp` can be specified; it defaults to the local current datetime.
 Default style declarations are black, continuous, and 0.13 mm width.
+Text `width` is the width of the complete text box in sheet millimetres.
 `add_layer`/`add_font` return codes; primitive additions return entity IDs.
 `rename_layer` keeps its code. `to_dict` returns an independent parser-compatible
 snapshot; `to_bytes` and `save` use the validated writer. Existing header metadata
