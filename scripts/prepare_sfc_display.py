@@ -58,6 +58,7 @@ def prepare(root: Path) -> None:
             width=4 * len(text.encode("cp932")), font=code,
         )
     text_doc.save(root / "text.sfc")
+    text_doc.save(root / "text-literal.sfc", literal_backslashes=True)
     attributes = ezsxf.new_sfc("attributes.sfc", timestamp="2026-10-06T00:00:00")
     target = attributes.add_circle((50, 50), 10)
     attributes.set_attribute(target, "材料", "鉄 & 鋼", group=["設計"])
@@ -78,6 +79,7 @@ def prepare(root: Path) -> None:
         "source_model_reparse": True,
         "files_sha256": {},
         "external_display_verified": False,
+        "literal_backslashes": "text-literal.sfc uses nonstandard single-byte spelling for isolated backslashes; its strict parsed model equals text.sfc",
     }
     for file in sorted(root.rglob("*")):
         if file.is_file():

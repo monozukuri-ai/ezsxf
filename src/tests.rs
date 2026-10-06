@@ -22,6 +22,7 @@ const WRITER_FIXTURE: &str = include_str!("../tests/fixtures/writer_all_features
 fn writer_options() -> SfcWriteOptions {
     SfcWriteOptions {
         allow_external_references: true,
+        ..SfcWriteOptions::default()
     }
 }
 
@@ -29,6 +30,45 @@ fn writer_fixture() -> ParseOutput {
     let output = parse_sfc_text(WRITER_FIXTURE, true).expect("writer fixture must parse");
     assert!(output.warnings.is_empty(), "{:?}", output.warnings);
     output
+}
+
+#[test]
+fn literal_backslash_output_preserves_safe_strings_and_rejects_ambiguity() {
+    for text in [r"C:\temp\new.sfc", "日本語 + \\ + quote' ) ,", "ソ 表"] {
+        let mut source = writer_fixture();
+        writer_record(&mut source, 27).parameters[3] = Value::String(text.into());
+        let (_, source) =
+            crate::writer::encode_document(&source.document, writer_options()).unwrap();
+        let options = SfcWriteOptions {
+            literal_backslashes: true,
+            ..writer_options()
+        };
+        let bytes = serialize_sfc(&source, options).unwrap();
+        let restored = parse_from_bytes(FileFormat::Sfc, &bytes, true).unwrap();
+        assert_eq!(restored.document, source.document);
+        if text.starts_with("C:") {
+            assert!(bytes.windows(7).any(|window| window == b"C:\\temp"));
+            assert_ne!(bytes, serialize_sfc(&source, writer_options()).unwrap());
+        }
+    }
+    for text in [r"\\server\share", "end\\", "slash\\'quote"] {
+        let mut source = writer_fixture();
+        writer_record(&mut source, 27).parameters[3] = Value::String(text.into());
+        let (_, source) =
+            crate::writer::encode_document(&source.document, writer_options()).unwrap();
+        let before = source.document.clone();
+        assert!(serialize_sfc(&source, writer_options()).is_ok());
+        let error = serialize_sfc(
+            &source,
+            SfcWriteOptions {
+                literal_backslashes: true,
+                ..writer_options()
+            },
+        )
+        .unwrap_err();
+        assert!(error.0.contains("literal_backslashes"));
+        assert_eq!(source.document, before);
+    }
 }
 
 fn writer_record(output: &mut ParseOutput, id: i64) -> &mut Record {

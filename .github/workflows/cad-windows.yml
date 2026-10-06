@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       process_locale:
-        description: 'Dedicated CAD process locale (external-manifest experiment)'
+        description: '8.25a external-manifest experiment; Unicode 10.03.6 always uses the original locale'
         type: choice
         options: [default, ja-JP]
         default: default
@@ -58,8 +58,14 @@ jobs:
       - name: Qualify dedicated CAD process
         shell: pwsh
         run: |
-          $locale=if ('${{ inputs.process_locale }}' -eq 'ja-JP') {'ja-JP'} else {''}
+          $locale=if ('${{ matrix.version }}' -eq '8.25a' -and '${{ inputs.process_locale }}' -eq 'ja-JP') {'ja-JP'} else {''}
           ./scripts/verify_sfc_cad_windows.ps1 -Version '${{ matrix.version }}' -ProcessLocale $locale -DisplayDirectory display-review
+      - name: Check saved text contents and resolved fonts
+        if: always()
+        shell: pwsh
+        run: |
+          $gate=if ('${{ matrix.version }}' -eq '10.03.6') {@('--require')} else {@()}
+          python scripts/verify_sfc_cad_text.py cad-verification @gate
       - uses: actions/upload-artifact@v4
         if: always()
         with:

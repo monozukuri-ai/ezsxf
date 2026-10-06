@@ -96,6 +96,7 @@ fn record(value: &Bound<'_, PyAny>) -> PyResult<Record> {
 pub(crate) fn encode_python(
     parsed: &Bound<'_, PyDict>,
     allow_external_references: bool,
+    literal_backslashes: bool,
 ) -> PyResult<Vec<u8>> {
     if required(parsed, "format")?.extract::<String>()? != "sfc" {
         return Err(PyValueError::new_err(
@@ -156,6 +157,7 @@ pub(crate) fn encode_python(
         &document,
         SfcWriteOptions {
             allow_external_references,
+            literal_backslashes,
         },
     )
     .map_err(|error| PyValueError::new_err(error.to_string()))?;
@@ -182,26 +184,30 @@ pub(crate) fn encode_python(
 
 /// Validate a complete SFC parse result and return Shift-JIS/CP932 bytes.
 /// External SAF references require explicit opt-in; dependencies are not copied.
+/// literal_backslashes selects nonstandard CAD spelling and rejects ambiguous strings.
 #[pyfunction]
-#[pyo3(signature = (parsed, *, allow_external_references=false))]
+#[pyo3(signature = (parsed, *, allow_external_references=false, literal_backslashes=false))]
 fn serialize_sfc(
     parsed: &Bound<'_, PyDict>,
     allow_external_references: bool,
+    literal_backslashes: bool,
 ) -> PyResult<Py<PyBytes>> {
-    let bytes = encode_python(parsed, allow_external_references)?;
+    let bytes = encode_python(parsed, allow_external_references, literal_backslashes)?;
     Ok(PyBytes::new_bound(parsed.py(), &bytes).unbind())
 }
 
 /// Validate and atomically resave a complete SFC parse result to a file.
 /// Header metadata and external-reference names are preserved unchanged.
+/// literal_backslashes selects nonstandard CAD spelling and rejects ambiguous strings.
 #[pyfunction]
-#[pyo3(signature = (parsed, path, *, allow_external_references=false))]
+#[pyo3(signature = (parsed, path, *, allow_external_references=false, literal_backslashes=false))]
 fn write_sfc(
     parsed: &Bound<'_, PyDict>,
     path: &Bound<'_, PyAny>,
     allow_external_references: bool,
+    literal_backslashes: bool,
 ) -> PyResult<()> {
-    let bytes = encode_python(parsed, allow_external_references)?;
+    let bytes = encode_python(parsed, allow_external_references, literal_backslashes)?;
     let path = parsed
         .py()
         .import_bound("os")?

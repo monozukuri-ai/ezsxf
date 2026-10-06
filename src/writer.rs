@@ -15,6 +15,9 @@ use crate::parser::parse_from_bytes;
 pub struct SfcWriteOptions {
     /// Preserve SAF references without copying or validating the external files.
     pub allow_external_references: bool,
+    /// Nonstandard CAD spelling for isolated backslashes in semantic strings.
+    /// Ambiguous runs, trailing backslashes and backslash-apostrophe are rejected.
+    pub literal_backslashes: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,7 +149,7 @@ pub(crate) fn encode_document(
         keyword(&record.keyword)?;
         text.push_str(&record.keyword);
         text.push('(');
-        emit_values(&mut text, &record.parameters, false, 0)?;
+        emit_values(&mut text, &record.parameters, false, false, 0)?;
         text.push_str(");\r\n");
     }
     text.push_str("ENDSEC;\r\nDATA;\r\n");
@@ -186,7 +189,13 @@ pub(crate) fn encode_document(
                     index + 1
                 ))
             })?;
-            emit_value(&mut text, value, role == 'T', 0)?;
+            emit_value(
+                &mut text,
+                value,
+                role == 'T',
+                options.literal_backslashes,
+                0,
+            )?;
         }
         validate_vertex_counts(record)?;
         write!(text, ")\r\n{}*/\r\n", tag.marker()).unwrap();
@@ -411,13 +420,14 @@ fn emit_values(
     text: &mut String,
     values: &[Value],
     semantic: bool,
+    literal_backslashes: bool,
     depth: usize,
 ) -> Result<(), WriteError> {
     for (index, value) in values.iter().enumerate() {
         if index != 0 {
             text.push(',');
         }
-        emit_value(text, value, semantic, depth + 1)?;
+        emit_value(text, value, semantic, literal_backslashes, depth + 1)?;
     }
     Ok(())
 }
@@ -426,6 +436,7 @@ fn emit_value(
     text: &mut String,
     value: &Value,
     semantic: bool,
+    literal_backslashes: bool,
     depth: usize,
 ) -> Result<(), WriteError> {
     if depth > 128 {
@@ -436,12 +447,19 @@ fn emit_value(
             if value.contains('\0') {
                 return Err(fail("SFC string contains NUL"));
             }
+            let literal = semantic && literal_backslashes;
+            if literal && (value.contains("\\\\") || value.contains("\\'") || value.ends_with('\\'))
+            {
+                return Err(fail(
+                    "literal_backslashes cannot encode consecutive, trailing or apostrophe-adjacent backslashes; use the standard output mode",
+                ));
+            }
             if semantic {
                 text.push('\\');
             }
             text.push('\'');
             for ch in value.chars() {
-                if ch == '\\' || (ch == '\'' && !semantic) {
+                if (ch == '\\' && !literal) || (ch == '\'' && !semantic) {
                     text.push(ch);
                 }
                 text.push(ch);
@@ -456,7 +474,7 @@ fn emit_value(
         Value::Real(_) => return Err(fail("SFC real must be finite")),
         Value::List(values) => {
             text.push('(');
-            emit_values(text, values, semantic, depth)?;
+            emit_values(text, values, semantic, literal_backslashes, depth)?;
             text.push(')');
         }
         // These are valid Part 21 header values, not SFC feature parameters.
@@ -482,7 +500,7 @@ fn emit_value(
         } => {
             keyword(name)?;
             write!(text, "{name}(").unwrap();
-            emit_values(text, parameters, false, depth)?;
+            emit_values(text, parameters, false, false, depth)?;
             text.push(')');
         }
     }

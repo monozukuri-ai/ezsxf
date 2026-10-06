@@ -6,6 +6,9 @@ param(
     [string]$DisplayDirectory = ''
 )
 $ErrorActionPreference = 'Stop'
+if ($ProcessLocale -and $Version -eq '10.03.6') {
+    throw 'Jw_cad 10 uses Unicode: the external ja-JP manifest experiment changes saved text. Use the original system locale instead.'
+}
 if (Test-Path $Output) { throw 'The result directory must be new.' }
 $root = [IO.Path]::GetFullPath($Output)
 New-Item -ItemType Directory $root | Out-Null
@@ -224,7 +227,7 @@ try {
     if ($ProcessLocale) { $report.external_manifest_probe_codepage=Set-ProcessLocale $exe $ProcessLocale }
     $cases=@(@{id='basic';path=(Join-Path $InputDirectory 'created.sfc')}, @{id='quoted';path=(Join-Path $InputDirectory 'quoted.sfc')}, @{id='compound';path='tests/fixtures/writer_all_features.sfc'}, @{id='attributes';path=(Join-Path $InputDirectory 'cad-attributes/attributes.sfc')})
     if ($DisplayDirectory) {
-        $cases+=@(@{id='display-text';path=(Join-Path $DisplayDirectory 'text.sfc')}, @{id='display-saf';path=(Join-Path $DisplayDirectory 'attributes/attributes.sfc')}, @{id='display-images';path=(Join-Path $DisplayDirectory 'images/images.sfc')}, @{id='display-revised-images';path=(Join-Path $DisplayDirectory 'revised-images/images.sfc')})
+        $cases+=@(@{id='display-text';path=(Join-Path $DisplayDirectory 'text.sfc')}, @{id='display-text-literal';path=(Join-Path $DisplayDirectory 'text-literal.sfc')}, @{id='display-saf';path=(Join-Path $DisplayDirectory 'attributes/attributes.sfc')}, @{id='display-images';path=(Join-Path $DisplayDirectory 'images/images.sfc')}, @{id='display-revised-images';path=(Join-Path $DisplayDirectory 'revised-images/images.sfc')})
     }
     foreach ($case in $cases) {
         $input=[IO.Path]::GetFullPath($case.path)

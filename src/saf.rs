@@ -421,7 +421,14 @@ impl SafDocument {
                     }
                     path.clone_from(&a.group);
                     write!(xml, "<Attr name=\"{}\"", escape(&a.name)).unwrap();
-                    if let Some(kind) = &a.attribute_type {
+                    // These predefined file attributes have type STR even when
+                    // omitted (attribute specification table 8, S-02/S-16).
+                    // DynaCAD rejects the omission for legacy SAF image bundles.
+                    // Preserve unknown omissions rather than guessing their type.
+                    let kind = a.attribute_type.as_deref().or_else(|| {
+                        matches!(a.name.as_str(), "画像" | "ファイル名").then_some("STR")
+                    });
+                    if let Some(kind) = kind {
                         write!(xml, " type=\"{}\"", escape(kind)).unwrap();
                     }
                     if let Some(unit) = &a.unit {
@@ -493,6 +500,32 @@ fn escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_file_attributes_emit_their_predefined_type() {
+        let xml = r#"<SxfAttributeXML version="3.0" date="2009-2-25" sxfFile="x.sfc" application="legacy"><Figure id="1" name="TIFF"><AttributeSet name="set" version="0" designedBy="SCADEC"><Attr name="画像">x.tif</Attr><Attr name="ファイル名">note.txt</Attr><Attr name="ターゲット">2</Attr><Attr name="等高線">12</Attr><Attr name="custom">opaque</Attr><Attr name="画像" type="URL">explicit</Attr></AttributeSet></Figure></SxfAttributeXML>"#;
+        let original = SafDocument::parse(xml.as_bytes()).unwrap();
+        let bytes = original.to_bytes("x.sfc").unwrap();
+        let written = String::from_utf8(bytes.clone()).unwrap();
+        assert!(written.contains("<Attr name=\"画像\" type=\"STR\">x.tif</Attr>"));
+        assert!(written.contains("<Attr name=\"ファイル名\" type=\"STR\">note.txt</Attr>"));
+        assert!(written.contains("<Attr name=\"画像\" type=\"URL\">explicit</Attr>"));
+        let restored = SafDocument::parse(&bytes).unwrap();
+        assert_eq!(original.date, restored.date);
+        assert_eq!(original.sets, restored.sets);
+        assert_eq!(original.dependencies(), restored.dependencies());
+        let mut expected = original.figures;
+        for values in expected[0].sets.values_mut() {
+            for attribute in values {
+                if attribute.attribute_type.is_none()
+                    && matches!(attribute.name.as_str(), "画像" | "ファイル名")
+                {
+                    attribute.attribute_type = Some("STR".into());
+                }
+            }
+        }
+        assert_eq!(expected, restored.figures);
+    }
+
     #[test]
     fn grammar_round_trip_and_references() {
         let mut doc = SafDocument::new("日本語.sfc".into(), "2026-10-06".into());

@@ -28,6 +28,9 @@ boxes; this run does not qualify native Windows CAD display.
 
 ## Display qualification on 2026-10-06
 
+The later compatibility follow-up below supersedes the unresolved SAF warning
+and the manifest-only save result in this original qualification table.
+
 `scripts/prepare_sfc_display.py` creates owned inputs and a separate
 `expectations.json`: five text rows, a circle with Japanese SAF properties, a
 Group 4 TIFF with an L and checkerboard, and a JPEG with red/green above
@@ -328,3 +331,58 @@ Linux. CI uploads the platform result separately for Ubuntu and Windows. SAF
 attribute and TIFF/JPEG placement authoring are supported within the documented
 grammar/basic-element scope. No P21 writer, complex-element editor, complete
 CAD interchange guarantee or OCF certificate is provided by these checks.
+
+## Compatibility follow-up on 2026-10-06
+
+`literal_backslashes=True` is an explicit, nonstandard display compatibility
+option on `serialize_sfc()`, `write_sfc()`, and `SfcDocument.to_bytes()`,
+`save()` and `save_bundle()`. It writes an isolated backslash once inside
+semantic SFC strings. The standard default still doubles it as prescribed by
+appendix SFC §1-1-3(3), printed page 3. Both spellings undergo strict reparse
+and equality checks before publication. Consecutive backslashes, a final
+backslash or a backslash immediately followed by an apostrophe are ambiguous
+with this spelling and raise an error without replacing a file or publishing
+a bundle. Header escaping, CP932 double-byte characters and SAF XML escaping
+are unaffected. A yen glyph in a substituted Japanese font remains possible.
+This option is for reviewed CAD display workflows, not electronic-delivery
+conformance. `write_sfc_bundle()` preserves existing sidecars; use
+`edit_sfc_bundle(...).save_bundle(...)` for SAF normalization and this option.
+
+```python
+document.save("cad-display.sfc", literal_backslashes=True)
+document = ezsxf.edit_sfc_bundle("source/D0PL001Z.SFC")
+document.save_bundle("reviewed-bundle")
+```
+
+DynaCAD Viewer 9.0 / Wine displays a single glyph for the isolated backslash
+and each separator in `C:\\temp\\new.sfc` in a controlled input; the standard
+comparison displays doubled glyphs. CP932 characters `ソ 表` remain intact.
+The owned five-row generator also emits `text-literal.sfc` for native checks.
+
+The legacy warning text was read through public Windows UI APIs:
+SAF could not be read, or its structure was invalid. In the normalized
+D0PL001Z bundle, adding only `type="STR"` to the `画像` attribute removes this
+warning and opens the drawing. The SAF writer now emits the predefined STR
+type when omitted for `画像` and `ファイル名` (attribute mechanism specification
+§1 and table 8, S-02/S-16, printed pages 1/17). Explicit types and other omitted
+types remain unchanged, including the numeric `ターゲット` and `等高線`.
+The 3.0-to-3.1 upgrade retains the attribute-set metadata, figure IDs, values,
+dependency names and unpadded legacy date. This is a Wine result; native
+Windows DynaCAD remains unqualified.
+
+[The native default-locale control](https://github.com/monozukuri-ai/ezsxf/actions/runs/37421483048)
+at `21af321` retains all five SFC text values, fonts and placements through
+save, overwrite and reopen in Jw_cad 10.03.6. Strict parsing and independent
+resolved JWW comparison pass; the latter has zero differences. Its en-US
+1252 canvas/JWW still contains Japanese mojibake, so stable saved SFC data
+does not qualify Japanese display. The 8.25a control fails its basic-operation
+gate under the non-Japanese system locale; it is retained as failure evidence.
+
+Jw_cad's [official change log](https://www.jwcad.net/versioninfo.htm) records
+the Unicode UTF-16 migration in 10.01. The external `ja-JP` manifest experiment
+is now restricted to 8.25a; the standalone verification script rejects it for
+10.03.6 before launching CAD. The native workflow checks strict saved text,
+resolved font names and placement independently of the operation gate, and
+requires those checks for 10.03.6. Earlier manifest-induced changes remain
+negative evidence rather than a claim about every Japanese Windows system.
+

@@ -68,6 +68,7 @@ pub(crate) fn prepare_bundle(
         &output,
         SfcWriteOptions {
             allow_external_references: true,
+            ..SfcWriteOptions::default()
         },
     )
     .map_err(validation)?;
@@ -253,6 +254,7 @@ pub(crate) fn prepare_bundle(
         &document,
         SfcWriteOptions {
             allow_external_references: true,
+            ..SfcWriteOptions::default()
         },
     )
     .map_err(validation)?;
