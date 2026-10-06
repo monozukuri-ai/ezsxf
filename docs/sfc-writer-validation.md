@@ -663,3 +663,37 @@ all-target/all-feature clippy. The five new Python detector regressions cover
 lost grouping/reuse, ID renumbering, changed SAF values/dependency bytes,
 prefixed attachment names, changed/missing images and empty exports. They are
 synthetic detector checks, separate from the recorded native CAD operations.
+
+
+## Basic writer MVP qualification (0.2.0)
+
+The [basic writer contract](sfc-writer-mvp.md) covers five primitives, layer/font
+codes and predefined/custom colour, line type and width creation. A new owned
+qualification drawing uses all five primitive kinds, edited endpoints/radius,
+Japanese layer/sheet/text and a semantic `C:\temp\図面.sfc` string. Its standard
+SFC SHA-256 is `072b82b18533dec3a22a499080439cda3ad0dc1fe175031f88ed83d2b86e26ec`;
+the literal-backslash variant is
+`05c839a240d4c7dc9ec9f23ccd800688b1bc2526a02755a34537628f86a46ed9`.
+
+Local verification passed 64 Rust tests, rustfmt and strict clippy, and 61 Python
+tests. Independent release-wheel Python 3.12 and source-distribution Python 3.9
+installations passed 61 tests with one optional matplotlib skip, and all nine
+installed-writer checks. Package checks cover version/type/license/source payload
+and exclude the private CAD evidence, vendor files and specification PDFs.
+
+Jw_cad 10.03.6 under Wine 9.0, with a private Japanese ACP 932 prefix, Xvfb and
+GDI, opened both inputs without a modal warning. Reviewed canvases contained the
+black line, blue custom-pattern circle/polyline, red dashed arc and Japanese
+text. Standard output displayed doubled yen glyphs for each semantic backslash;
+the compatibility variant displayed one yen glyph. These are visual import
+checks, not native Windows evidence, exact stroke-width metrology or a CAD
+re-export guarantee. Both input hashes were unchanged; the owned Wine/display
+processes were stopped afterward. A new real-Windows CAD check is pending access
+to the previously authorized VM subscription. Earlier Windows CAD observations
+above remain scoped to their original inputs and environments.
+
+Release CI also qualifies installed wheels on Linux/macOS/Windows and tests an
+sdist install on minimum Python 3.9 using the tests shipped inside that archive.
+Manual workflow runs produce qualified artifacts without publishing; tag runs
+require all qualification jobs and version/payload/hash checks before PyPI and
+GitHub publication.

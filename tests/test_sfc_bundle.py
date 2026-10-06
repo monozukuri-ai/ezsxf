@@ -159,15 +159,22 @@ class SfcBundleTest(unittest.TestCase):
                     (destination / "改名.SAF").read_text(encoding=encoding),
                 )
 
-    @unittest.skipUnless(os.name == "posix", "Case-distinct source files and symlinks")
-    def test_ambiguous_case_and_symlinks_fail_before_publication(self) -> None:
+    def test_ambiguous_case_fails_before_publication(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = setup_source(root)
             (root / "IMAGE.BMP").write_bytes(b"ambiguous")
+            if (root / "IMAGE.BMP").samefile(root / "image.bmp"):
+                self.skipTest("Requires a case-sensitive source filesystem")
             with self.assertRaisesRegex(ValueError, "ambiguous"):
                 ezsxf.write_sfc_bundle(source, root / "output")
-            (root / "IMAGE.BMP").unlink()
+            self.assertFalse((root / "output").exists())
+
+    @unittest.skipUnless(os.name == "posix", "Symlink creation requires privileges on Windows")
+    def test_symlinks_fail_before_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = setup_source(root)
             (root / "real.bmp").write_bytes(b"target")
             (root / "image.bmp").unlink()
             (root / "image.bmp").symlink_to(root / "real.bmp")

@@ -15,6 +15,7 @@ mod python;
 mod python_editor;
 mod python_writer;
 mod saf;
+mod style_editor;
 mod writer;
 
 pub use bundle::{write_sfc_bundle, SfcBundleReport};

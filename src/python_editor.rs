@@ -33,6 +33,13 @@ fn scalar(value: &Bound<'_, PyAny>) -> PyResult<Value> {
         Err(PyTypeError::new_err("Expected an integer, float or string"))
     }
 }
+fn real_number(value: &Bound<'_, PyAny>) -> PyResult<f64> {
+    match scalar(value)? {
+        Value::Integer(value) => Ok(value as f64),
+        Value::Real(value) => Ok(value),
+        _ => Err(PyTypeError::new_err("Expected an integer or float")),
+    }
+}
 fn points(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     if !value.is_instance_of::<PyList>() && !value.is_instance_of::<PyTuple>() {
         return Err(PyTypeError::new_err("points must be a list or tuple"));
@@ -106,6 +113,52 @@ impl PythonSfcDocument {
     }
     fn add_font(&mut self, name: &str) -> PyResult<i64> {
         self.document.add_font(name).map_err(error)
+    }
+    fn add_color(&mut self, color: &Bound<'_, PyAny>) -> PyResult<i64> {
+        if color.is_instance_of::<PyString>() {
+            return self
+                .document
+                .add_named_color(&color.extract::<String>()?)
+                .map_err(error);
+        }
+        if !color.is_instance_of::<PyTuple>() && !color.is_instance_of::<PyList>() {
+            return Err(PyTypeError::new_err(
+                "color must be a predefined name or an RGB tuple/list",
+            ));
+        }
+        let rgb = color
+            .iter()?
+            .map(|v| match scalar(&v?)? {
+                Value::Integer(value) => Ok(value),
+                _ => Err(PyTypeError::new_err("RGB components must be integers")),
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let rgb: [i64; 3] = rgb
+            .try_into()
+            .map_err(|_| PyValueError::new_err("RGB needs exactly three components"))?;
+        self.document.add_rgb_color(rgb).map_err(error)
+    }
+    #[pyo3(signature = (name, *, pattern=None))]
+    fn add_line_type(&mut self, name: &str, pattern: Option<&Bound<'_, PyAny>>) -> PyResult<i64> {
+        let pattern = pattern
+            .map(|value| {
+                if !value.is_instance_of::<PyList>() && !value.is_instance_of::<PyTuple>() {
+                    return Err(PyTypeError::new_err("pattern must be a list or tuple"));
+                }
+                value
+                    .iter()?
+                    .map(|v| real_number(&v?))
+                    .collect::<PyResult<Vec<_>>>()
+            })
+            .transpose()?;
+        self.document
+            .add_line_type(name, pattern.as_deref())
+            .map_err(error)
+    }
+    fn add_line_width(&mut self, width_mm: &Bound<'_, PyAny>) -> PyResult<i64> {
+        self.document
+            .add_line_width(real_number(width_mm)?)
+            .map_err(error)
     }
     #[pyo3(signature = (destination, *, file_name=None, literal_backslashes=false))]
     fn save_bundle<'py>(

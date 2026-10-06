@@ -143,7 +143,11 @@ deliveries after ordinary errors; it does not promise power-loss durability.
 ```python
 doc = ezsxf.new_sfc("created.sfc", name="Drawing", width_mm=297, height_mm=210)
 layer = doc.add_layer("Structure")
-line_id = doc.add_line((0, 0), (100, 50), layer=layer)
+color = doc.add_color((32, 96, 160))
+line_type = doc.add_line_type("dashed")
+line_width = doc.add_line_width(0.35)
+line_id = doc.add_line((0, 0), (100, 50), layer=layer, color=color,
+                       line_type=line_type, line_width=line_width)
 doc.add_circle((50, 50), 10)
 doc.add_arc((80, 50), 10, 0, 90)  # angles in degrees
 doc.add_polyline([(0, 0), (10, 0), (10, 10)])
@@ -161,7 +165,12 @@ existing.save("created.sfc")
 code 1. `timestamp` can be specified; it defaults to the local current datetime.
 Default style declarations are black, continuous, and 0.13 mm width.
 Text `width` is the width of the complete text box in sheet millimetres.
-`add_layer`/`add_font` return codes; primitive additions return entity IDs.
+`add_layer`/`add_font` and the style factories return codes; primitive additions
+return entity IDs. `add_color` accepts a predefined name or an RGB tuple/list;
+`add_line_type` accepts a predefined name or a custom draw/gap `pattern` in mm;
+`add_line_width` accepts paper millimetres. Repeated styles reuse their codes.
+See the [basic writer contract](docs/sfc-writer-mvp.md) for bounds, encoding,
+units and acceptance scope.
 `rename_layer` keeps its code. `to_dict` returns an independent parser-compatible
 snapshot; `to_bytes` and `save` use the validated writer. Existing header metadata
 is retained. External SAF references require the same explicit opt-in for these
