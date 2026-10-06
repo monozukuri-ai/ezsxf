@@ -329,7 +329,7 @@ python scripts/verify_sfc_platform.py --output platform-verification
 The platform script labels the native Windows locked-file check `not-run` on
 Linux. CI uploads the platform result separately for Ubuntu and Windows. SAF
 attribute and TIFF/JPEG placement authoring are supported within the documented
-grammar/basic-element scope. No P21 writer, complex-element editor, complete
+grammar/basic-element scope. No P21 writer, complete
 CAD interchange guarantee or OCF certificate is provided by these checks.
 
 ## Compatibility follow-up on 2026-10-06
@@ -411,3 +411,139 @@ strict all-target/all-feature clippy pass.
 passes at `b3ea80c`. Private screenshots, warning text, vendor files and the
 hash-checked report are in `.local/internal/compatibility-review-20261006/`;
 the 12 owned display inputs and vendor executables remain unchanged.
+
+## Complex editing and Japanese-system follow-up on 2026-10-06
+
+The [complex editing API](sfc-editing.md) creates and updates named-field
+ellipses, ellipse arcs, splines, clothoids, point markers, dimensions and
+leaders. It also supports ordinary group/part operations, composite boundaries,
+solid fills and user-defined hatches. Regression checks cover nested ownership,
+stable entity IDs, rejected destructive/reference-breaking edits, uppercase
+existing records and boundary-code retargeting. They establish editor and
+strict SFC round trips; they do not establish equivalent behavior in every CAD.
+
+Local validation passes 61 Rust tests, all 53 Python tests, formatting and strict
+all-target/all-feature clippy. [Linux and native MSVC Windows CI at
+`72b2b7f`](https://github.com/monozukuri-ai/ezsxf/actions/runs/37438031938)
+passes. The Windows job runs 53 Python tests with one optional plotting test and
+two POSIX-only filesystem tests skipped. Its native Windows filesystem save
+checks are distinct from the CAD UI evidence below.
+
+The dedicated Windows 11 desktop was rebooted after changing the system locale
+to `ja-JP`; the native ANSI code page is 932. The logged-on user's regional
+culture remains `en-US`. Jw_cad 10.03.6 was run in the interactive desktop
+session using the original hash-checked application, without an external
+manifest. Fifteen independently generated inputs were exercised through save,
+overwrite, close and reopen. The original inputs and application stayed unchanged.
+
+| Input | Observed native result |
+| --- | --- |
+| Basic Japanese text | Save/reopen completes, but Japanese text, font and width change; three resolved JWW differences. |
+| Five-row standard/literal text | Both complete, but each has nine resolved JWW differences. The mixed apostrophe/parenthesis row produces a saved SFC that fails strict parsing. Japanese display remains mojibake. |
+| Ellipse, ellipse arc, spline | Save/reopen completes with zero resolved JWW differences. Ellipses survive, but the spline is converted to three lines. First-save and overwrite SFC entities, typed features and structure agree. |
+| Solid fill and user hatch | Save/reopen completes with zero resolved JWW differences, but only eight boundary lines remain: fill/hatch features are absent from Jw_cad's saved SFC. First-save and overwrite outputs agree. |
+| Ten structured/attribute/image inputs | Initial import and baseline JWW save complete, but SFC export reports `30002: SFIG_LOCATE` and leaves an empty output; no SFC save/reopen qualification. These include layer-0/layer-1 groups, a part, a partial figure, ATRU/SAF/image wrappers, and authored dimensions/groups. |
+
+Resolved JWW equality compares the drawing immediately after **Jw_cad's own
+import** with its reopened result. It does not prove preservation of input
+features already discarded or converted during that import. In particular,
+the hatch result does not qualify fill appearance or hatch preservation.
+The literal-backslash option improves the reviewed single-glyph spelling;
+it does not repair the Japanese corruption observed in this Windows setup.
+These results differ from the earlier en-US saved-data control and are retained
+as a separate environment-qualified result, not a general Japanese Windows claim.
+
+The native evidence archive for this 15-case run has SHA-256
+`9e24130d545c2b8131f1573a96274dd668b03d729cce895816f5dce792e7dc78`.
+Private inputs, UI snapshots, saved SFC/JWW files, per-file hashes and independent
+analysis are retained under `.local/internal/native-complex-20261006/`.
+Vendor software and screenshots are excluded from public distributions.
+
+The supplied DynaCAD Viewer 9.0 official installer completes on this native
+desktop. The installed executable matches the original SHA-256
+`c27e1532e1300f54a180329f0cdd427a364df1bd60912b78d110522079f4616d`.
+Nevertheless, both an empty launch and a launch with the text SFC exit before
+showing any window, with exit code `0xC0000005`. All five display attempts
+(text, SAF, original/revised images and normalized legacy drawing) remain
+unqualified. SFC, SAF, TIFF/JPEG dependencies and the application stay unchanged.
+The official installation evidence ZIP has SHA-256
+`72d7919fb44ff5d33e6ceadc1571c138d2f9315787d0cbeb7c73937e348f52f0`.
+The earlier Wine attribute inspector, raster display and normalized legacy SAF
+results remain Wine results. A native empty-launch crash does not establish a
+failure of the SFC/SAF/image bundle.
+
+Jw_cad 8.25a also remains unqualified: its original user-path control stops at
+an association prompt, the explicit external-manifest experiment exits before
+the drawing window, and a subsequent original-application ASCII-path run stops
+at a save confirmation. The last run completes baseline JWW saves but not SFC
+save/overwrite/reopen. Its archive SHA-256 is
+`d6bfc8e5ee9caa2e7cbb5faf2814fa24904ca4644dadba4ce946ee5428409c15`.
+These are startup/UI-operation limitations, not qualified text or structural
+round-trip results. Fresh validation filenames now contain a per-run token to
+avoid collisions with artifacts carried by a reused application directory;
+only the file created in the current run is deliberately overwritten.
+
+### Regional culture comparison on the same desktop
+
+Changing the logged-on user's regional culture to `ja-JP`, in addition to the
+already Japanese system locale/ANSI 932, resolves the tested Japanese text
+failures. The user registry values are backed up before each comparison and
+restored exactly afterward; the original regional culture is `en-US`.
+Applications are launched in a new process after the temporary change.
+[Microsoft documents this new-session behavior for `Set-Culture`](https://learn.microsoft.com/en-us/powershell/module/international/set-culture).
+The public CAD script's `-RequireJapaneseLocale` gate now checks both cultures.
+
+In Jw_cad 10.03.6, the basic Japanese input and both standard/literal five-row
+inputs complete **save, overwrite, close and reopen** under this profile.
+Strict parsing passes for all saved SFC files; text values, font names and
+placements match the inputs. All three independent resolved JWW comparisons
+have zero differences. The first-save and overwrite entities, typed features
+and structure agree. Actual reopened canvases display Japanese, the CP932
+trailing-backslash characters, mixed punctuation and one glyph per isolated
+literal backslash. The mixed Japanese-font row uses a yen-shaped glyph.
+The authored ellipse/ellipse-arc/spline case also completes with zero resolved
+JWW differences, retaining the previously observed spline-to-lines conversion.
+The archive SHA-256 is
+`2415d87cbac0933cd4bdddbdc05e69d607ba885ebbacb759c7e2b3ee13fdb6e4`.
+This qualifies the tested Japanese profile; the en-US regional failures above
+remain separate environment evidence.
+
+With the same temporary Japanese regional culture, the natively installed
+DynaCAD Viewer 9.0 opens all five display cases without a warning. Actual
+window images confirm Japanese/literal-backslash text, the original TIFF/JPEG
+patterns, their edited rotations, and the normalized legacy TIFF contours with
+the vector road layout. No SAF warning appears for the normalized legacy
+bundle. Application, SFC, SAF and image hashes remain unchanged. The native
+five-case display archive has SHA-256
+`ccfc24110e9e4cee629a752e693299ca68c411039897555a2701468456bc46d4`.
+The earlier native empty-launch crash is specific to the tested en-US regional
+profile; it does not prevent display under the verified Japanese profile.
+
+The native attribute detail tree additionally displays the `設計` group,
+`材料` of type STR with value `鉄 & 鋼`, and the Japanese/mixed-punctuation
+`備考` of type STR. Its single backslash is rendered as a yen-shaped glyph in
+the inspector font. Attribute-set ID/name/version/designer and figure ID/name
+are also visible. This is an actual native viewer screenshot review; legacy
+tree controls do not expose their item text through the sampled UI Automation
+provider. The SAF and SFC hashes remain unchanged.
+
+The layer-0 ordinary group still reports `30002: SFIG_LOCATE` on direct SFC
+export under the Japanese profile. Saving/importing its native JWW first does
+not resolve this error. The JWW bridge experiment is recorded separately; it
+does not qualify preservation of group structure. Identity-group removal is
+an explicit editing operation that can produce a flat copy while retaining
+primitive IDs and coordinates; it intentionally removes grouping.
+Using `ungroup(22)` on the owned identity-group fixture retains the complete
+circle record with ID 20. The flat copy passes native Jw_cad save, overwrite
+and reopen, strict SFC parsing and independent JWW comparison with zero
+differences. This qualifies that explicit flat-copy workflow, not group
+structure preservation. The flat-copy/attribute-inspector evidence archive has
+SHA-256 `e77486ac98b0621316496e11c82e7d77a07d50e37e7c042345814f48b3a4aece`.
+
+The legacy Jw_cad filename dialog accepts a basename, not an absolute path.
+It also remembers an earlier SFC save directory across application copies.
+Validation therefore uses fresh per-run names, records the actual input folder,
+and accepts an optional `-SaveSearchDirectory` for that known CAD directory.
+Only the uniquely named file created in the current run is deliberately
+overwritten. Unknown save destinations cause the operation gate to fail;
+an unobserved file is not treated as a successful save.

@@ -4,6 +4,7 @@
 
 mod attributes;
 mod bundle;
+mod complex_editor;
 mod document;
 mod editor;
 mod features;

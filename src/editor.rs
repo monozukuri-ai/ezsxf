@@ -33,7 +33,7 @@ pub(crate) fn record(keyword: &str, parameters: Vec<Value>) -> Record {
 pub(crate) fn instance(id: i64, record: Record) -> EntityInstance {
     EntityInstance {
         id,
-        sfc_version: Some(SfcVersionTag::V2),
+        sfc_version: crate::features::required_sfc_version(&record.keyword),
         body: EntityBody::Simple(record),
     }
 }
@@ -276,11 +276,15 @@ impl SfcDocument {
         id: i64,
         changes: &BTreeMap<String, Value>,
     ) -> Result<(), WriteError> {
-        let index = self.editable_index(id)?;
+        let index = self.geometry_index(id)?;
         let mut document = self.output.document.clone();
         let EntityBody::Simple(record) = &mut document.entities[index].body else {
             unreachable!()
         };
+        if !basic(&record.keyword) {
+            crate::complex_editor::update_fields(record, changes)?;
+            return self.commit(document);
+        }
         let fields: &[&str] = match record.keyword.to_ascii_lowercase().as_str() {
             "line_feature" => &[
                 "layer",
@@ -372,7 +376,13 @@ impl SfcDocument {
         self.commit(document)
     }
     pub fn remove_element(&mut self, id: i64) -> Result<(), WriteError> {
-        let index = self.editable_index(id)?;
+        let index = self.geometry_index(id)?;
+        if matches!(&self.output.document.entities[index].body, EntityBody::Simple(r) if r.keyword.eq_ignore_ascii_case("composite_curve_feature"))
+        {
+            return Err(error(
+                "Use release_composite_curve to preserve boundary ownership",
+            ));
+        }
         if self.attachment(id).is_some() {
             let mut next = self.clone();
             next.remove_attachment(id)?;
@@ -450,7 +460,7 @@ impl SfcDocument {
     }
 }
 
-fn numeric_text(value: &Value) -> Result<String, WriteError> {
+pub(crate) fn numeric_text(value: &Value) -> Result<String, WriteError> {
     match value {
         Value::Integer(v) => Ok(v.to_string()),
         Value::Real(v) if v.is_finite() => {

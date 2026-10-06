@@ -181,10 +181,11 @@ All support `layer`/`color`; line/curve elements also support `line_type` and
 `line_width`, text supports `font`. Numeric updates require actual finite
 numbers. Each operation validates a candidate in Rust and commits only on
 success. Excess precision is rejected without rounding. Updates/removals are
-limited to basic primitives directly on the sheet or inside a transparent
-attribute attachment. Group components, composite boundaries, dimensions,
-hatches and other definitions remain preserved. Their creation/editing and P21
-generation are not implemented.
+supported geometry, including existing group and composite-boundary children.
+Ordinary group placements, dimensions and supported fills/hatches have explicit
+editing APIs; see [complex-element editing](docs/sfc-editing.md). SAF attachment
+operations remain limited to the five basic primitives directly on the sheet.
+P21 generation is not implemented.
 
 ## Creating and editing SAF attributes and raster placements
 

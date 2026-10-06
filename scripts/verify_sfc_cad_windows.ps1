@@ -1,9 +1,13 @@
-param(
+﻿param(
     [ValidateSet('10.03.6', '8.25a')][string]$Version = '10.03.6',
     [string]$InputDirectory = 'platform-verification',
     [string]$Output = 'cad-verification',
     [ValidateSet('', 'ja-JP')][string]$ProcessLocale = '',
-    [string]$DisplayDirectory = ''
+    [string]$DisplayDirectory = '',
+    [string]$ApplicationDirectory = '',
+    [string]$CaseManifest = '',
+    [string]$SaveSearchDirectory = '',
+    [switch]$RequireJapaneseLocale
 )
 $ErrorActionPreference = 'Stop'
 if ($ProcessLocale -and $Version -eq '10.03.6') {
@@ -12,8 +16,10 @@ if ($ProcessLocale -and $Version -eq '10.03.6') {
 if (Test-Path $Output) { throw 'The result directory must be new.' }
 $root = [IO.Path]::GetFullPath($Output)
 New-Item -ItemType Directory $root | Out-Null
-$runtime = Join-Path $env:RUNNER_TEMP ('ezsxf-cad-' + [Guid]::NewGuid().ToString('N'))
+$runtimeParent=if ($env:RUNNER_TEMP) {$env:RUNNER_TEMP} else {[IO.Path]::GetTempPath()}
+$runtime = Join-Path $runtimeParent ('ezsxf-cad-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $runtime | Out-Null
+$script:runFileToken=[Guid]::NewGuid().ToString('N').Substring(0,8)
 $pins = @{
     '10.03.6' = @('jww10036.exe', '64c629ab8eabfd0d2a54228c5bdb2c0ff0ed91ce77de30509fb1de109684d2a6')
     '8.25a' = @('jww825a.exe', '47632125be65d95c0a3722521dfa892cab2ecadd043194494e2e6feb12c87d78')
@@ -160,12 +166,32 @@ function Close-Cad {
     $script:process=$null
 }
 function Open-Cad([string]$path, [string]$name) {
-    $script:process=Start-Process $script:exe -ArgumentList ('"'+$path+'"') -PassThru
-    [void](Await { Main-Window })
+    $script:process=Start-Process $script:exe -ArgumentList ('"'+$path+'"') -WorkingDirectory (Split-Path $script:exe) -PassThru
+    $script:startupPromptHandled=$false
+    [void](Await {
+        if ($script:process.HasExited) { throw ('CAD exited before showing its drawing window; exit code='+$script:process.ExitCode+'; association prompt cancelled='+$script:startupPromptHandled) }
+        foreach ($row in @(Read-Windows $script:process)) {
+            # Cancel only the known portable-installation association prompt.
+            # The current user's JWW association remains unchanged.
+            if ($row.class -eq '#32770' -and
+                $row.text -eq 'jw_win' -and
+                @($row.children | Where-Object { $_.class -eq 'Static' -and $_.text -match '関連付け|file association|^\s*Jww' -and $_.text -match 'install\.exe' }).Count -gt 0 -and
+                @($row.children | Where-Object { $_.class -eq 'Button' -and $_.id -eq 2 }).Count -eq 1) {
+                if (-not $script:startupPromptHandled) { [void](Snapshot $script:process ($name+'-association-prompt')) }
+                $script:startupPromptHandled=$true
+                [void][CadUI]::PostMessage([IntPtr]$row.handle,0x111,[IntPtr]2,[IntPtr]::Zero)
+            }
+        }
+        Main-Window
+    })
     Start-Sleep -Seconds 2
     [void](Snapshot $script:process $name)
 }
 function Save-Cad([string]$stem, [string]$extension, [string]$previous='') {
+    # Fresh saves must never collide with files from an earlier review. Reuse
+    # only the path created by this run for the deliberate overwrite check.
+    $stem=if ($previous) { [IO.Path]::GetFileNameWithoutExtension($previous) } else { $stem+'_'+$script:runFileToken }
+    $script:attemptedOutput=$stem+'.'+$extension
     $main=Main-Window
     $pattern=if ($extension -eq 'sfc') {'SFC.*保存'} else {'名前を付けて保存'}
     $command=$main.menus | Where-Object { $_.text -match $pattern } | Select-Object -First 1
@@ -195,7 +221,7 @@ function Save-Cad([string]$stem, [string]$extension, [string]$previous='') {
         $errors=@($rows | Where-Object { $_.class -eq '#32770' -and @($_.children | Where-Object { $_.text -match '30002|SFIG_LOCATE' }).Count })
         if ($errors.Count) { throw 'CAD reported 30002: SFIG_LOCATE.' }
         if (@($rows | Where-Object { $_.class -eq '#32770' }).Count) { return $null }
-        $paths=@($script:app, $script:inputFolder, (Get-Location).Path, $script:root) | Select-Object -Unique
+        $paths=@($script:app,$script:inputFolder,(Get-Location).Path,$script:root,$script:saveSearchFolder) | Where-Object { $_ } | Select-Object -Unique
         foreach ($folder in $paths) {
             $candidate=Join-Path $folder ($stem+'.'+$extension)
             if ((Test-Path $candidate) -and (Get-Item $candidate).Length -gt 0 -and (Get-Item $candidate).LastWriteTimeUtc.Ticks -ne $mtime) { return $candidate }
@@ -208,8 +234,24 @@ function Save-Cad([string]$stem, [string]$extension, [string]$previous='') {
     return $path
 }
 $report = @{version=$Version; platform=[Environment]::OSVersion.VersionString; ansi_codepage=[CadUI]::GetACP(); culture=[Globalization.CultureInfo]::CurrentCulture.Name; requested_process_locale=$ProcessLocale; native_windows=$true; mode='save, overwrite and reopen'; cases=@(); complete=$false}
+$script:saveSearchFolder=if ($SaveSearchDirectory) { [IO.Path]::GetFullPath($SaveSearchDirectory) } else { '' }
+if ($script:saveSearchFolder -and -not (Test-Path $script:saveSearchFolder -PathType Container)) { throw 'The additional CAD save directory must exist.' }
+$report.system_locale=(Get-WinSystemLocale).Name
+$report.session=[Diagnostics.Process]::GetCurrentProcess().SessionId
 $process = $null
 try {
+    if ($RequireJapaneseLocale -and ($report.ansi_codepage -ne 932 -or $report.system_locale -ne 'ja-JP' -or $report.culture -ne 'ja-JP')) {
+        throw 'Japanese qualification requires ja-JP system and user regional cultures, with ANSI 932 after restart.'
+    }
+    if ($ApplicationDirectory) {
+        $app=[IO.Path]::GetFullPath($ApplicationDirectory)
+        $manifest=Get-Content (Join-Path $app 'application-hashes.json') -Raw | ConvertFrom-Json
+        foreach ($file in $manifest.PSObject.Properties) {
+            if ((Get-FileHash (Join-Path $app $file.Name) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $file.Value) { throw 'Application hash mismatch.' }
+        }
+        if (Test-Path (Join-Path $app 'Jw_win.exe.manifest')) { throw 'External application manifest is not allowed in the native locale control.' }
+        $exe=Join-Path $app 'Jw_win.exe'
+    } else {
     $pin = $pins[$Version]
     $installer = Join-Path $runtime $pin[0]
     & curl.exe --ipv4 --fail --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output $installer ('https://www.jwcad.net/download/' + $pin[0])
@@ -221,6 +263,7 @@ try {
     if ($setup.ExitCode -ne 0) { throw ('Installer failed: '+$setup.ExitCode) }
     $exe=Join-Path $app 'Jw_win.exe'
     $report.installer_sha256=$hash
+    }
     $report.application_sha256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
     $report.sxf_library_sha256=(Get-FileHash (Join-Path $app 'common_lib.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
     $report.japanese_fonts=@(Get-ChildItem (Join-Path $env:WINDIR 'Fonts') -File | Where-Object { $_.Name -match 'gothic|meiryo|yumin|yugoth|mincho' } | Select-Object -ExpandProperty Name)
@@ -229,14 +272,27 @@ try {
     if ($DisplayDirectory) {
         $cases+=@(@{id='display-text';path=(Join-Path $DisplayDirectory 'text.sfc')}, @{id='display-text-literal';path=(Join-Path $DisplayDirectory 'text-literal.sfc')}, @{id='display-saf';path=(Join-Path $DisplayDirectory 'attributes/attributes.sfc')}, @{id='display-images';path=(Join-Path $DisplayDirectory 'images/images.sfc')}, @{id='display-revised-images';path=(Join-Path $DisplayDirectory 'revised-images/images.sfc')})
     }
+    if ($CaseManifest) {
+        $manifestPath=[IO.Path]::GetFullPath($CaseManifest)
+        $base=Split-Path $manifestPath
+        $items=Get-Content $manifestPath -Raw | ConvertFrom-Json
+        $cases=@(foreach($item in $items) { @{id=$item.id;path=(Join-Path $base $item.path)} })
+        if (@($cases | Where-Object id -eq 'basic').Count -ne 1) { throw 'The case manifest must contain one basic control.' }
+        if (@($cases | ForEach-Object {$_.id} | Select-Object -Unique).Count -ne $cases.Count) { throw 'Duplicate case IDs.' }
+        foreach($case in $cases) {
+            if ($case.id -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]*$') { throw 'Case IDs must be simple ASCII artifact names.' }
+        }
+    }
     foreach ($case in $cases) {
         $input=[IO.Path]::GetFullPath($case.path)
         $inputFolder=Split-Path $input
         $before=(Get-FileHash $input -Algorithm SHA256).Hash
+        $script:inputFolder=Split-Path $input
         $evidence=Join-Path $root $case.id
         New-Item -ItemType Directory $evidence | Out-Null
         Copy-Item $input (Join-Path $evidence 'input.sfc')
         $result=@{id=$case.id;input_sha256=$before;cad_save_completed=$false}
+        $script:attemptedOutput=''
         try {
             Open-Cad $input ($case.id+'-input')
             $baseline=Save-Cad ($case.id+'_baseline') 'jww'
@@ -264,14 +320,17 @@ try {
                 [void]$process.WaitForExit(15000)
             }
             $process=$null
-            if (-not $result.cad_save_completed) {
-                $partial=Join-Path $app ($case.id+'_native.sfc')
-                if (Test-Path $partial) { Copy-Item $partial (Join-Path $evidence 'failed-output.sfc') }
+            if (-not $result.cad_save_completed -and $script:attemptedOutput.EndsWith('.sfc')) {
+                foreach ($folder in @($app,$inputFolder,(Get-Location).Path,$root,$script:saveSearchFolder) | Where-Object { $_ } | Select-Object -Unique) {
+                    $partial=Join-Path $folder $script:attemptedOutput
+                    if (Test-Path $partial) { Copy-Item $partial (Join-Path $evidence 'failed-output.sfc'); break }
+                }
             }
             $result.source_unchanged=((Get-FileHash $input -Algorithm SHA256).Hash -eq $before)
             $result.files_sha256=@{}
             foreach ($file in Get-ChildItem $evidence -File) { $result.files_sha256[$file.Name]=(Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
             $report.cases+=$result
+            $report | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 (Join-Path $root 'verification.json')
         }
     }
     $report.complete=$true

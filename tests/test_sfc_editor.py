@@ -92,12 +92,12 @@ class SfcEditorTest(unittest.TestCase):
             ezsxf.parse_sfc(doc.to_bytes(allow_external_references=True)), result
         )
 
-    def test_group_components_definitions_and_unknown_ids_cannot_be_edited(
+    def test_definitions_and_unknown_ids_cannot_be_edited(
         self,
     ) -> None:
         doc = ezsxf.edit_sfc(ezsxf.parse_sfc(str(FIXTURE)))
         before = doc.to_dict()
-        for entity_id in (14, 900, 999, 123456):
+        for entity_id in (900, 999, 123456):
             with self.subTest(entity_id=entity_id):
                 with self.assertRaises(ValueError):
                     doc.update_element(entity_id, radius=2)
