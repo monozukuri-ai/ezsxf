@@ -65,22 +65,34 @@ impl PythonSfcDocument {
     fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         crate::python::output_to_python(py, self.document.snapshot())
     }
-    #[pyo3(signature = (*, allow_external_references=false))]
-    fn to_bytes(&self, py: Python<'_>, allow_external_references: bool) -> PyResult<Py<PyBytes>> {
+    #[pyo3(signature = (*, allow_external_references=false, literal_backslashes=false))]
+    fn to_bytes(
+        &self,
+        py: Python<'_>,
+        allow_external_references: bool,
+        literal_backslashes: bool,
+    ) -> PyResult<Py<PyBytes>> {
         let bytes = self
             .document
             .to_bytes(SfcWriteOptions {
                 allow_external_references,
+                literal_backslashes,
             })
             .map_err(error)?;
         Ok(PyBytes::new_bound(py, &bytes).unbind())
     }
-    #[pyo3(signature = (path, *, allow_external_references=false))]
-    fn save(&self, path: &Bound<'_, PyAny>, allow_external_references: bool) -> PyResult<()> {
+    #[pyo3(signature = (path, *, allow_external_references=false, literal_backslashes=false))]
+    fn save(
+        &self,
+        path: &Bound<'_, PyAny>,
+        allow_external_references: bool,
+        literal_backslashes: bool,
+    ) -> PyResult<()> {
         let bytes = self
             .document
             .to_bytes(SfcWriteOptions {
                 allow_external_references,
+                literal_backslashes,
             })
             .map_err(error)?;
         write_bytes_atomic(&crate::python_writer::fspath(path)?, &bytes).map_err(Into::into)
@@ -95,16 +107,22 @@ impl PythonSfcDocument {
     fn add_font(&mut self, name: &str) -> PyResult<i64> {
         self.document.add_font(name).map_err(error)
     }
-    #[pyo3(signature = (destination, *, file_name=None))]
+    #[pyo3(signature = (destination, *, file_name=None, literal_backslashes=false))]
     fn save_bundle<'py>(
         &self,
         py: Python<'py>,
         destination: &Bound<'_, PyAny>,
         file_name: Option<&str>,
+        literal_backslashes: bool,
     ) -> PyResult<Bound<'py, PyDict>> {
-        let report = self
-            .document
-            .save_bundle(&crate::python_writer::fspath(destination)?, file_name)?;
+        let report = self.document.save_bundle_with_options(
+            &crate::python_writer::fspath(destination)?,
+            file_name,
+            SfcWriteOptions {
+                allow_external_references: true,
+                literal_backslashes,
+            },
+        )?;
         let result = PyDict::new_bound(py);
         result.set_item("drawing", report.drawing)?;
         result.set_item("files", report.files)?;
@@ -439,7 +457,7 @@ fn new_sfc(
 }
 #[pyfunction]
 fn edit_sfc(parsed: &Bound<'_, PyDict>) -> PyResult<PythonSfcDocument> {
-    let bytes = crate::python_writer::encode_python(parsed, true)?;
+    let bytes = crate::python_writer::encode_python(parsed, true, false)?;
     let output = crate::parser::parse_from_bytes(FileFormat::Sfc, &bytes, true)
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
     Ok(PythonSfcDocument {

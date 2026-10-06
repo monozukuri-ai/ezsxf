@@ -498,6 +498,18 @@ impl SfcDocument {
         destination: &Path,
         file_name: Option<&str>,
     ) -> std::io::Result<crate::bundle::SfcBundleReport> {
+        self.save_bundle_with_options(destination, file_name, SfcWriteOptions::default())
+    }
+
+    /// Save a validated bundle with an explicit SFC spelling option. Dependencies
+    /// are validated by this operation, so external references are permitted.
+    pub fn save_bundle_with_options(
+        &self,
+        destination: &Path,
+        file_name: Option<&str>,
+        mut options: SfcWriteOptions,
+    ) -> std::io::Result<crate::bundle::SfcBundleReport> {
+        options.allow_external_references = true;
         self.validate_links()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?;
         let invalid =
@@ -597,13 +609,7 @@ impl SfcDocument {
                 return Err(invalid(error("Dependency collides with SAF")));
             }
         }
-        let (bytes, _) = encode_document(
-            &document,
-            SfcWriteOptions {
-                allow_external_references: true,
-            },
-        )
-        .map_err(invalid)?;
+        let (bytes, _) = encode_document(&document, options).map_err(invalid)?;
         if files.insert(name.into(), bytes).is_some() {
             return Err(invalid(error("Dependency collides with SFC")));
         }

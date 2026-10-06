@@ -22,6 +22,44 @@ def standalone_result() -> dict:
 
 
 class SfcWriterTest(unittest.TestCase):
+    def test_literal_backslashes_are_explicit_and_transactional(self) -> None:
+        doc = ezsxf.new_sfc()
+        text_id = doc.add_text(r"C:\temp\new.sfc 日本語 ソ 表 + quote' ) ,", (20, 20))
+        parsed = doc.to_dict()
+        encoded = doc.to_bytes(literal_backslashes=True)
+        self.assertEqual(ezsxf.parse_sfc(encoded), parsed)
+        self.assertIn(b"C:\\temp\\new.sfc", encoded)
+        self.assertIn(b"C:\\\\temp\\\\new.sfc", doc.to_bytes())
+        self.assertEqual(ezsxf.serialize_sfc(parsed, literal_backslashes=True), encoded)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "literal.sfc"
+            doc.save(output, literal_backslashes=True)
+            self.assertEqual(output.read_bytes(), encoded)
+            ezsxf.write_sfc(parsed, output, literal_backslashes=True)
+            self.assertEqual(output.read_bytes(), encoded)
+            doc.set_attribute(text_id, "note", "keep \\ here")
+            before_bundle = doc.to_dict()
+            doc.save_bundle(root / "standard-bundle")
+            doc.save_bundle(root / "bundle", literal_backslashes=True)
+            restored = ezsxf.edit_sfc_bundle(root / "bundle/drawing.sfc")
+            standard = ezsxf.edit_sfc_bundle(root / "standard-bundle/drawing.sfc")
+            self.assertEqual(restored.to_dict(), standard.to_dict())
+            self.assertEqual(doc.to_dict(), before_bundle)
+            self.assertEqual(restored.get_attributes(text_id), doc.get_attributes(text_id))
+            for unsafe in (r"\\server\share", "end\\", "slash\\'quote"):
+                doc.update_element(text_id, text=unsafe)
+                before = doc.to_dict()
+                with self.subTest(text=unsafe):
+                    with self.assertRaisesRegex(ValueError, "literal_backslashes"):
+                        doc.save(output, allow_external_references=True, literal_backslashes=True)
+                    with self.assertRaisesRegex(OSError, "literal_backslashes"):
+                        doc.save_bundle(root / "rejected", literal_backslashes=True)
+                    self.assertEqual(output.read_bytes(), encoded)
+                    self.assertFalse((root / "rejected").exists())
+                    self.assertEqual(doc.to_dict(), before)
+                    doc.to_bytes(allow_external_references=True)
+
     def test_all_features_and_structures_round_trip_through_json(self) -> None:
         parsed = ezsxf.parse_sfc(str(FIXTURE))
         self.assertEqual(

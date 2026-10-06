@@ -42,6 +42,7 @@ fn validate(document: &ParsedDocument) -> Result<ParseOutput, WriteError> {
         document,
         SfcWriteOptions {
             allow_external_references: true,
+            ..SfcWriteOptions::default()
         },
     )
     .map(|(_, output)| output)
@@ -142,6 +143,7 @@ impl SfcDocument {
             &output,
             SfcWriteOptions {
                 allow_external_references: true,
+                ..SfcWriteOptions::default()
             },
         )?;
         Ok(Self {
