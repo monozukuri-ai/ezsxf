@@ -255,6 +255,9 @@ try {
         $cases=@(foreach($item in $items) { @{id=$item.id;path=(Join-Path $base $item.path)} })
         if (@($cases | Where-Object id -eq 'basic').Count -ne 1) { throw 'The case manifest must contain one basic control.' }
         if (@($cases | ForEach-Object {$_.id} | Select-Object -Unique).Count -ne $cases.Count) { throw 'Duplicate case IDs.' }
+        foreach($case in $cases) {
+            if ($case.id -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]*$') { throw 'Case IDs must be simple ASCII artifact names.' }
+        }
     }
     foreach ($case in $cases) {
         $input=[IO.Path]::GetFullPath($case.path)
@@ -299,6 +302,7 @@ try {
             $result.files_sha256=@{}
             foreach ($file in Get-ChildItem $evidence -File) { $result.files_sha256[$file.Name]=(Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
             $report.cases+=$result
+            $report | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 (Join-Path $root 'verification.json')
         }
     }
     $report.complete=$true
