@@ -425,8 +425,9 @@ strict SFC round trips; they do not establish equivalent behavior in every CAD.
 Local validation passes 61 Rust tests, all 53 Python tests, formatting and strict
 all-target/all-feature clippy. [Linux and native MSVC Windows CI at
 `72b2b7f`](https://github.com/monozukuri-ai/ezsxf/actions/runs/37438031938)
-passes. The Windows job runs 53 Python tests with three optional plotting tests
-skipped. Its filesystem save checks are distinct from the CAD UI evidence below.
+passes. The Windows job runs 53 Python tests with one optional plotting test and
+two POSIX-only filesystem tests skipped. Its native Windows filesystem save
+checks are distinct from the CAD UI evidence below.
 
 The dedicated Windows 11 desktop was rebooted after changing the system locale
 to `ja-JP`; the native ANSI code page is 932. The logged-on user's regional
@@ -441,7 +442,7 @@ overwrite, close and reopen. The original inputs and application stayed unchange
 | Five-row standard/literal text | Both complete, but each has nine resolved JWW differences. The mixed apostrophe/parenthesis row produces a saved SFC that fails strict parsing. Japanese display remains mojibake. |
 | Ellipse, ellipse arc, spline | Save/reopen completes with zero resolved JWW differences. Ellipses survive, but the spline is converted to three lines. First-save and overwrite SFC entities, typed features and structure agree. |
 | Solid fill and user hatch | Save/reopen completes with zero resolved JWW differences, but only eight boundary lines remain: fill/hatch features are absent from Jw_cad's saved SFC. First-save and overwrite outputs agree. |
-| Ten structured/attribute/image inputs | Import reports `30002: SFIG_LOCATE`; no save/reopen qualification. These include layer-0/layer-1 groups, a part, a partial figure, ATRU/SAF/image wrappers, and authored dimensions/groups. |
+| Ten structured/attribute/image inputs | Initial import and baseline JWW save complete, but SFC export reports `30002: SFIG_LOCATE` and leaves an empty output; no SFC save/reopen qualification. These include layer-0/layer-1 groups, a part, a partial figure, ATRU/SAF/image wrappers, and authored dimensions/groups. |
 
 Resolved JWW equality compares the drawing immediately after **Jw_cad's own
 import** with its reopened result. It does not prove preservation of input
@@ -481,3 +482,68 @@ These are startup/UI-operation limitations, not qualified text or structural
 round-trip results. Fresh validation filenames now contain a per-run token to
 avoid collisions with artifacts carried by a reused application directory;
 only the file created in the current run is deliberately overwritten.
+
+### Regional culture comparison on the same desktop
+
+Changing the logged-on user's regional culture to `ja-JP`, in addition to the
+already Japanese system locale/ANSI 932, resolves the tested Japanese text
+failures. The user registry values are backed up before each comparison and
+restored exactly afterward; the original regional culture is `en-US`.
+Applications are launched in a new process after the temporary change.
+[Microsoft documents this new-session behavior for `Set-Culture`](https://learn.microsoft.com/en-us/powershell/module/international/set-culture).
+The public CAD script's `-RequireJapaneseLocale` gate now checks both cultures.
+
+In Jw_cad 10.03.6, the basic Japanese input and both standard/literal five-row
+inputs complete **save, overwrite, close and reopen** under this profile.
+Strict parsing passes for all saved SFC files; text values, font names and
+placements match the inputs. All three independent resolved JWW comparisons
+have zero differences. The first-save and overwrite entities, typed features
+and structure agree. Actual reopened canvases display Japanese, the CP932
+trailing-backslash characters, mixed punctuation and one glyph per isolated
+literal backslash. The mixed Japanese-font row uses a yen-shaped glyph.
+The authored ellipse/ellipse-arc/spline case also completes with zero resolved
+JWW differences, retaining the previously observed spline-to-lines conversion.
+The archive SHA-256 is
+`2415d87cbac0933cd4bdddbdc05e69d607ba885ebbacb759c7e2b3ee13fdb6e4`.
+This qualifies the tested Japanese profile; the en-US regional failures above
+remain separate environment evidence.
+
+With the same temporary Japanese regional culture, the natively installed
+DynaCAD Viewer 9.0 opens all five display cases without a warning. Actual
+window images confirm Japanese/literal-backslash text, the original TIFF/JPEG
+patterns, their edited rotations, and the normalized legacy TIFF contours with
+the vector road layout. No SAF warning appears for the normalized legacy
+bundle. Application, SFC, SAF and image hashes remain unchanged. The native
+five-case display archive has SHA-256
+`ccfc24110e9e4cee629a752e693299ca68c411039897555a2701468456bc46d4`.
+The earlier native empty-launch crash is specific to the tested en-US regional
+profile; it does not prevent display under the verified Japanese profile.
+
+The native attribute detail tree additionally displays the `設計` group,
+`材料` of type STR with value `鉄 & 鋼`, and the Japanese/mixed-punctuation
+`備考` of type STR. Its single backslash is rendered as a yen-shaped glyph in
+the inspector font. Attribute-set ID/name/version/designer and figure ID/name
+are also visible. This is an actual native viewer screenshot review; legacy
+tree controls do not expose their item text through the sampled UI Automation
+provider. The SAF and SFC hashes remain unchanged.
+
+The layer-0 ordinary group still reports `30002: SFIG_LOCATE` on direct SFC
+export under the Japanese profile. Saving/importing its native JWW first does
+not resolve this error. The JWW bridge experiment is recorded separately; it
+does not qualify preservation of group structure. Identity-group removal is
+an explicit editing operation that can produce a flat copy while retaining
+primitive IDs and coordinates; it intentionally removes grouping.
+Using `ungroup(22)` on the owned identity-group fixture retains the complete
+circle record with ID 20. The flat copy passes native Jw_cad save, overwrite
+and reopen, strict SFC parsing and independent JWW comparison with zero
+differences. This qualifies that explicit flat-copy workflow, not group
+structure preservation. The flat-copy/attribute-inspector evidence archive has
+SHA-256 `e77486ac98b0621316496e11c82e7d77a07d50e37e7c042345814f48b3a4aece`.
+
+The legacy Jw_cad filename dialog accepts a basename, not an absolute path.
+It also remembers an earlier SFC save directory across application copies.
+Validation therefore uses fresh per-run names, records the actual input folder,
+and accepts an optional `-SaveSearchDirectory` for that known CAD directory.
+Only the uniquely named file created in the current run is deliberately
+overwritten. Unknown save destinations cause the operation gate to fail;
+an unobserved file is not treated as a successful save.

@@ -6,6 +6,7 @@
     [string]$DisplayDirectory = '',
     [string]$ApplicationDirectory = '',
     [string]$CaseManifest = '',
+    [string]$SaveSearchDirectory = '',
     [switch]$RequireJapaneseLocale
 )
 $ErrorActionPreference = 'Stop'
@@ -190,6 +191,7 @@ function Save-Cad([string]$stem, [string]$extension, [string]$previous='') {
     # Fresh saves must never collide with files from an earlier review. Reuse
     # only the path created by this run for the deliberate overwrite check.
     $stem=if ($previous) { [IO.Path]::GetFileNameWithoutExtension($previous) } else { $stem+'_'+$script:runFileToken }
+    $script:attemptedOutput=$stem+'.'+$extension
     $main=Main-Window
     $pattern=if ($extension -eq 'sfc') {'SFC.*保存'} else {'名前を付けて保存'}
     $command=$main.menus | Where-Object { $_.text -match $pattern } | Select-Object -First 1
@@ -219,7 +221,7 @@ function Save-Cad([string]$stem, [string]$extension, [string]$previous='') {
         $errors=@($rows | Where-Object { $_.class -eq '#32770' -and @($_.children | Where-Object { $_.text -match '30002|SFIG_LOCATE' }).Count })
         if ($errors.Count) { throw 'CAD reported 30002: SFIG_LOCATE.' }
         if (@($rows | Where-Object { $_.class -eq '#32770' }).Count) { return $null }
-        $paths=@($script:app, $script:inputFolder, (Get-Location).Path, $script:root) | Select-Object -Unique
+        $paths=@($script:app,$script:inputFolder,(Get-Location).Path,$script:root,$script:saveSearchFolder) | Where-Object { $_ } | Select-Object -Unique
         foreach ($folder in $paths) {
             $candidate=Join-Path $folder ($stem+'.'+$extension)
             if ((Test-Path $candidate) -and (Get-Item $candidate).Length -gt 0 -and (Get-Item $candidate).LastWriteTimeUtc.Ticks -ne $mtime) { return $candidate }
@@ -232,12 +234,14 @@ function Save-Cad([string]$stem, [string]$extension, [string]$previous='') {
     return $path
 }
 $report = @{version=$Version; platform=[Environment]::OSVersion.VersionString; ansi_codepage=[CadUI]::GetACP(); culture=[Globalization.CultureInfo]::CurrentCulture.Name; requested_process_locale=$ProcessLocale; native_windows=$true; mode='save, overwrite and reopen'; cases=@(); complete=$false}
+$script:saveSearchFolder=if ($SaveSearchDirectory) { [IO.Path]::GetFullPath($SaveSearchDirectory) } else { '' }
+if ($script:saveSearchFolder -and -not (Test-Path $script:saveSearchFolder -PathType Container)) { throw 'The additional CAD save directory must exist.' }
 $report.system_locale=(Get-WinSystemLocale).Name
 $report.session=[Diagnostics.Process]::GetCurrentProcess().SessionId
 $process = $null
 try {
-    if ($RequireJapaneseLocale -and ($report.ansi_codepage -ne 932 -or $report.system_locale -ne 'ja-JP')) {
-        throw 'Japanese qualification requires the real ja-JP system locale and ANSI 932 after restart.'
+    if ($RequireJapaneseLocale -and ($report.ansi_codepage -ne 932 -or $report.system_locale -ne 'ja-JP' -or $report.culture -ne 'ja-JP')) {
+        throw 'Japanese qualification requires ja-JP system and user regional cultures, with ANSI 932 after restart.'
     }
     if ($ApplicationDirectory) {
         $app=[IO.Path]::GetFullPath($ApplicationDirectory)
@@ -283,10 +287,12 @@ try {
         $input=[IO.Path]::GetFullPath($case.path)
         $inputFolder=Split-Path $input
         $before=(Get-FileHash $input -Algorithm SHA256).Hash
+        $script:inputFolder=Split-Path $input
         $evidence=Join-Path $root $case.id
         New-Item -ItemType Directory $evidence | Out-Null
         Copy-Item $input (Join-Path $evidence 'input.sfc')
         $result=@{id=$case.id;input_sha256=$before;cad_save_completed=$false}
+        $script:attemptedOutput=''
         try {
             Open-Cad $input ($case.id+'-input')
             $baseline=Save-Cad ($case.id+'_baseline') 'jww'
@@ -314,9 +320,11 @@ try {
                 [void]$process.WaitForExit(15000)
             }
             $process=$null
-            if (-not $result.cad_save_completed) {
-                $partial=Join-Path $app ($case.id+'_native.sfc')
-                if (Test-Path $partial) { Copy-Item $partial (Join-Path $evidence 'failed-output.sfc') }
+            if (-not $result.cad_save_completed -and $script:attemptedOutput.EndsWith('.sfc')) {
+                foreach ($folder in @($app,$inputFolder,(Get-Location).Path,$root,$script:saveSearchFolder) | Where-Object { $_ } | Select-Object -Unique) {
+                    $partial=Join-Path $folder $script:attemptedOutput
+                    if (Test-Path $partial) { Copy-Item $partial (Join-Path $evidence 'failed-output.sfc'); break }
+                }
             }
             $result.source_unchanged=((Get-FileHash $input -Algorithm SHA256).Hash -eq $before)
             $result.files_sha256=@{}
