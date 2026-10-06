@@ -16,6 +16,9 @@ reader currently exposes the generic Part 21 entity representation.
 ## Features
 
 - Parse `P21` and `SFC` from file path, text, or bytes
+- Resave parsed SFC drawings as validated Shift-JIS/CP932 bytes or files
+- Save an SFC/SAF/image bundle with consistent names and dependency validation
+- Create and edit basic SFC lines, circles, arcs, polylines, text and layers
 - Decode SFC files as UTF-8 or Windows Shift-JIS/CP932 without lossy replacement
 - Strict and lenient parsing modes
 - Structured parse output (`header`, `entities`, `typed_features`, `model`, `warnings`)
@@ -53,6 +56,196 @@ print(result["format"])          # "sfc"
 print(len(result["typed_features"]))
 print(result["model"]["sheet"]["component_ids"])
 ```
+
+## Resaving SFC
+
+```python
+import ezsxf
+
+parsed = ezsxf.parse_sfc("drawing.sfc", strict=True)
+sfc_bytes = ezsxf.serialize_sfc(parsed)
+ezsxf.write_sfc(parsed, "copy.sfc")
+```
+
+This API resaves an existing complete SFC parse result. It preserves entity IDs,
+record order, parameter values, the typed features, hierarchy, style codes and
+attribute attachments. Output uses Shift-JIS/CP932 and CRLF line endings.
+Comments, whitespace, original encoding and quote spelling are not preserved.
+The header is retained, including `FILE_NAME` and the original timestamp, even
+when writing to a different path. New drawing construction and P21 output are
+not supported by these functions.
+
+`entities` and `header.entities` are the serialization source. Before returning
+bytes or touching the destination, the writer checks field syntax and precision,
+reparses the output without warnings and verifies the derived `typed_features`,
+`model` and header aliases. It rejects inconsistent dictionary edits, skipped
+features, invalid references/order, unencodable or changed characters, and
+excess precision (lengths beyond six fractional digits or angles/scales beyond
+15 digits excluding the sign and decimal point). It does not round values or
+silently repair input.
+`write_sfc` writes a temporary file beside the destination and replaces the
+destination after validation and a successful write. Existing regular-file
+permissions are retained; symlink destinations are rejected.
+
+Drawings with external SAF references require explicit opt-in:
+
+```python
+ezsxf.write_sfc(parsed, "copy.sfc", allow_external_references=True)
+```
+
+This preserves the references only: it does not read, validate, rename or copy
+SAF or image files. Arrange the referenced files separately, retaining their
+names and directory relationships. In particular, when the SAF name is omitted,
+keep the drawing basename consistent with the retained `FILE_NAME` and SAF
+basename. Use the default to reject such drawings until those dependencies are
+handled. Inline ATRU/ATRS attachments do not require this opt-in.
+
+The writer follows SXF Ver.3.1 SFC specification §§1-1-1 and 1-1-2 (body
+pp. 2–6) for representation and §§1-3 (body pp. 99–103) for ordering and
+relationships. The checked-in small fixture covers all 34 feature types,
+nested figures, hatch holes and ATRF/ATRU/ATRS. Local round-trip tests also use
+available real samples under `data/`. These checks establish parser/model
+round trips; external CAD interoperability and OCF certification are separate
+validation steps.
+
+## Saving SFC/SAF bundles
+
+```python
+report = ezsxf.write_sfc_bundle(
+    "source/drawing.sfc", "delivery", file_name="renamed.sfc",
+    extra_files=["custom-attachment.bin"],  # optional vendor-specific dependencies
+)
+print(report["files"])
+```
+
+The destination must be a **new directory**. The operation validates the drawing,
+SAF root metadata and matching ATRF/Figure IDs, gathers local image filenames
+from SAF `Attr` names `画像`/`ファイル名` and inline ATRU attachments, then copies
+dependencies unchanged. It also copies a declared local SYSTEM DTD. Missing,
+ambiguous, unsafe or symlink dependencies fail before publishing the directory.
+Images and copied DTDs are opaque bytes; this is not image decoding or full SAF
+DTD/schema validation. Unknown vendor attachment references must be supplied
+through `extra_files`.
+
+An explicit `file_name` updates the header, ATRF definitions/placements and SAF
+`sxfFile`, and renames the SAF to the new drawing stem. Other XML spelling and
+opaque attributes are retained; UTF-8 (including BOM) and Shift-JIS/CP932 SAFs
+are supported. Without a rename, drawing/SAF filenames and records are retained
+(the header filename is aligned with the physical source basename). Dependencies
+must be regular files in the source directory; path references, multiple SAF
+files, PUBLIC/internal DTD declarations and existing destinations are rejected.
+Validated files are staged next to the destination and published together using
+an exclusive directory rename on Linux, macOS or Windows. This prevents partial
+deliveries after ordinary errors; it does not promise power-loss durability.
+
+## Creating and editing basic SFC elements
+
+```python
+doc = ezsxf.new_sfc("created.sfc", name="Drawing", width_mm=297, height_mm=210)
+layer = doc.add_layer("Structure")
+line_id = doc.add_line((0, 0), (100, 50), layer=layer)
+doc.add_circle((50, 50), 10)
+doc.add_arc((80, 50), 10, 0, 90)  # angles in degrees
+doc.add_polyline([(0, 0), (10, 0), (10, 10)])
+doc.add_text("SXF 日本語", (10, 80), height=3.5, width=3.5)
+doc.update_element(line_id, end_x=120.125, color=2)
+doc.save("created.sfc")
+
+existing = ezsxf.edit_sfc(ezsxf.parse_sfc("created.sfc"))
+existing.update_element(line_id, start_x=5, start_y=10)
+existing.remove_element(line_id)
+existing.save("created.sfc")
+```
+
+`new_sfc` creates a free-size sheet in millimetres, layer code 1 and text-font
+code 1. `timestamp` can be specified; it defaults to the local current datetime.
+Default style declarations are black, continuous, and 0.13 mm width.
+`add_layer`/`add_font` return codes; primitive additions return entity IDs.
+`rename_layer` keeps its code. `to_dict` returns an independent parser-compatible
+snapshot; `to_bytes` and `save` use the validated writer. Existing header metadata
+is retained. External SAF references require the same explicit opt-in for these
+two methods; save to a source directory and use `write_sfc_bundle` for delivery.
+
+`update_element(id, **changes)` retains unspecified values, ID and record order:
+
+| Element | Geometry/text fields |
+| --- | --- |
+| Line | `start_x`, `start_y`, `end_x`, `end_y` |
+| Circle | `center_x`, `center_y`, `radius` |
+| Arc | `center_x`, `center_y`, `radius`, `direction`, `start_angle`, `end_angle` |
+| Polyline | `points` (list of coordinate pairs; at least two) |
+| Text | `text`, `x`, `y`, `height`, `width`, `spacing`, `angle`, `slant`, `base_point`, `direction` |
+
+All support `layer`/`color`; line/curve elements also support `line_type` and
+`line_width`, text supports `font`. Numeric updates require actual finite
+numbers. Each operation validates a candidate in Rust and commits only on
+success. Excess precision is rejected without rounding. Updates/removals are
+limited to basic primitives directly on the sheet or inside a transparent
+attribute attachment. Group components, composite boundaries, dimensions,
+hatches and other definitions remain preserved. Their creation/editing and P21
+generation are not implemented.
+
+## Creating and editing SAF attributes and raster placements
+
+```python
+doc = ezsxf.new_sfc("drawing.sfc")
+circle = doc.add_circle((50, 50), 10)
+doc.set_attribute(circle, "Material", "Steel")
+doc.set_attribute(circle, "Height", "12.5", attribute_type="LEN", unit="m")
+image = doc.add_image("scan.tif", (80, 40), 100, 60, angle=15)
+doc.save_bundle("delivery", file_name="drawing.sfc")
+
+edited = ezsxf.edit_sfc_bundle("delivery/drawing.sfc")
+edited.set_attribute(circle, "Material", "Concrete")
+edited.remove_attribute(circle, "Height")
+edited.update_image(image, (90, 45), 100, 60, image="replacement.tif")
+edited.save_bundle("revised", file_name="revised.sfc")
+```
+
+`set_attribute` creates an ATRF wrapper or updates its loaded SAF. It returns
+the stable figure identifier and keeps the target entity ID. Attribute identity
+is its set metadata (`set_name`, `set_version`, `designed_by`), `group` path
+(at most two levels), and `name`. Repeated names at that address are ambiguous
+and cannot be updated by name. `get_attributes` returns the values and metadata.
+Removing the final attribute unwraps the element; `remove_attachment` removes
+all its attributes, and `remove_element` removes the wrapper and target together.
+Elements referenced by a SAF `ターゲット` attribute cannot be detached.
+
+Use `edit_sfc_bundle` to load an existing SFC, SAF and file dependencies before
+editing SAF data. This API validates the supported SAF grammar, rejects unknown
+XML fields, and upgrades legacy 3.0 inline `AttributeSet` data to 3.1 root
+definitions and `AttrSetRef` children. Authored SAFs use UTF-8 and normalize XML
+formatting, comments and encoding. `write_sfc_bundle` remains the byte-preserving
+route for unedited vendor XML. `saf_bytes` returns the authored SAF (or `None`);
+`validate_saf(bytes)` checks the 3.1 DTD structure, required fields, unique set
+metadata/IDs, figure IDs, set references and group depth. External DTD contents
+and custom vendor schemas are not evaluated; type/unit/value interpretation
+remains the caller's responsibility.
+
+`add_dependency(path, file_name=...)` supplies files referenced by `ファイル名`
+attributes. `save_bundle` checks dependencies and collisions before publishing
+a new directory; SFC header, ATRF names and SAF `sxfFile` are renamed together.
+Unused dependencies are omitted. Loading captures dependency bytes, so later
+changes to source files do not affect the edited document.
+
+`add_image` and `update_image` accept TIFF/JPEG files and generate the standard
+`フィーチャ定義属性セット` image attribute and a clockwise closed rectangle.
+The anchor is the lower-left corner; dimensions are sheet millimetres and angles
+are degrees. Computed corners are rounded to the SFC six-decimal coordinate
+limit. TIFF metadata must describe one page of G4 strips, monochrome 1-bit
+pixels, normal orientation and dimensions no greater than 13,000 pixels.
+JPEG frame/segment headers are checked. Pixel decoding and image conversion are
+not performed, and supported headers alone do not establish valid pixel data.
+Image geometry updates must retain a clockwise rectangle.
+
+`set_single_attribute` authors ATRU names and `set_text_attribute` authors ATRS
+names (text targets only); use prescribed common attribute names/types for these
+mechanisms. Arbitrary attribute sets should use SAF. All attachment APIs
+currently target the same five basic element types; grouped elements are not
+editable. Failed operations keep both SFC and SAF state unchanged.
+
+See [writer validation and Windows procedure](docs/sfc-writer-validation.md) for
+the distinction between model tests, Wine CAD checks and native Windows saving.
 
 ## Title-block (sheet) attribute names
 
@@ -166,6 +359,14 @@ python -m ezsxf parse p21 ./data/D0LS004ZP21/D0LS004Z.P21 --lenient
 
 # convert SFC to DXF
 python -m ezsxf to-dxf ./data/D0LS004ZSFC/D0LS004Z.SFC drawing.dxf
+
+# validate and resave SFC (input and output can be the same file)
+python -m ezsxf resave-sfc drawing.sfc copy.sfc
+# preserve external references; arrange SAF/image files separately
+python -m ezsxf resave-sfc drawing.sfc copy.sfc --allow-external-references
+
+# deliver SFC/SAF/images together into a new directory
+python -m ezsxf bundle-sfc drawing.sfc delivery --file-name renamed.sfc
 
 # save or interactively display a matplotlib drawing
 python -m ezsxf plot ./data/D0LS004ZSFC/D0LS004Z.SFC drawing.png --dpi 200

@@ -719,7 +719,10 @@ fn sfc_model_to_python<'py>(py: Python<'py>, model: &SfcModel) -> PyResult<Bound
     Ok(result)
 }
 
-fn output_to_python<'py>(py: Python<'py>, output: &ParseOutput) -> PyResult<Bound<'py, PyDict>> {
+pub(crate) fn output_to_python<'py>(
+    py: Python<'py>,
+    output: &ParseOutput,
+) -> PyResult<Bound<'py, PyDict>> {
     let root = PyDict::new_bound(py);
     root.set_item("format", output.document.format.as_str())?;
 
@@ -830,5 +833,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hello_from_bin, m)?)?;
     m.add_function(wrap_pyfunction!(parse_p21, m)?)?;
     m.add_function(wrap_pyfunction!(parse_sfc, m)?)?;
+    crate::python_writer::register(m)?;
+    crate::python_editor::register(m)?;
     Ok(())
 }

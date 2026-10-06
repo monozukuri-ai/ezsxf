@@ -792,10 +792,8 @@ impl<'a> Parser<'a> {
                     }
                 }
                 Some('\'') => {
-                    if matches!(self.peek_following_non_ws_char(1), Some(',') | Some(')')) {
-                        self.advance_char();
-                        break;
-                    }
+                    // Only backslash + quote terminates a backslash-quoted SFC
+                    // string. A literal quote followed by ',' or ')' is content.
                     self.advance_char();
                     out.push('\'');
                 }
@@ -1013,18 +1011,6 @@ impl<'a> Parser<'a> {
 
     fn peek_next_char(&self) -> Option<char> {
         self.chars.get(self.index + 1).copied()
-    }
-
-    fn peek_following_non_ws_char(&self, offset: usize) -> Option<char> {
-        let mut idx = self.index + offset;
-        while let Some(ch) = self.chars.get(idx).copied() {
-            if ch.is_whitespace() {
-                idx += 1;
-                continue;
-            }
-            return Some(ch);
-        }
-        None
     }
 
     fn advance_char(&mut self) {

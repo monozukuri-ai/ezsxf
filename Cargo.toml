@@ -32,6 +32,14 @@ include = [
     "/src/ezsxf/py.typed",
     "/tests/test_python_api.py",
     "/tests/test_conversion.py",
+    "/tests/test_sfc_writer.py",
+    "/tests/test_sfc_bundle.py",
+    "/tests/test_sfc_editor.py",
+    "/tests/test_sfc_attributes.py",
+    "/scripts/verify_sfc_windows.ps1",
+    "/scripts/verify_sfc_platform.py",
+    "/docs/sfc-writer-validation.md",
+    "/tests/fixtures/writer_all_features.sfc",
 ]
 
 [lib]
@@ -43,4 +51,6 @@ crate-type = ["cdylib"]
 # "extension-module" tells pyo3 we want to build an extension module (skips linking against libpython.so)
 # "abi3-py39" tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.9
 encoding_rs = "0.8"
+libc = "0.2"
+roxmltree = "0.21"
 pyo3 = { version = "0.22.4", features = ["extension-module", "abi3-py39"] }

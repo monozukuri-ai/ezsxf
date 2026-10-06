@@ -6,7 +6,19 @@ import sys
 from importlib.metadata import PackageNotFoundError, version
 from typing import Sequence
 
-from ezsxf._core import hello_from_bin, parse_p21, parse_sfc
+from ezsxf._core import (
+    SfcDocument,
+    edit_sfc,
+    edit_sfc_bundle,
+    hello_from_bin,
+    new_sfc,
+    parse_p21,
+    parse_sfc,
+    serialize_sfc,
+    write_sfc,
+    write_sfc_bundle,
+    validate_saf,
+)
 from ezsxf._dxf import to_dxf
 from ezsxf._plot import plot
 
@@ -33,6 +45,30 @@ def _build_cli_parser() -> argparse.ArgumentParser:
         "--pretty",
         action="store_true",
         help="Pretty-print JSON output",
+    )
+
+    resave_cmd = subcommands.add_parser(
+        "resave-sfc", help="Validate and resave an existing SFC drawing"
+    )
+    resave_cmd.add_argument("input", help="Path to input SFC file")
+    resave_cmd.add_argument("output", help="Path to output SFC file")
+    resave_cmd.add_argument(
+        "--allow-external-references",
+        action="store_true",
+        help="Preserve SAF references without copying SAF or image files",
+    )
+
+    bundle_cmd = subcommands.add_parser(
+        "bundle-sfc", help="Save an SFC, SAF and dependencies into a new directory"
+    )
+    bundle_cmd.add_argument("input", help="Path to input SFC file")
+    bundle_cmd.add_argument("output_directory", help="New destination directory")
+    bundle_cmd.add_argument("--file-name", help="Rename drawing and SAF consistently")
+    bundle_cmd.add_argument(
+        "--extra-file",
+        action="append",
+        default=[],
+        help="Additional local dependency filename",
     )
 
     dxf_cmd = subcommands.add_parser("to-dxf", help="Convert SFC to DXF")
@@ -138,6 +174,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         return 0
 
+    if args.command == "resave-sfc":
+        try:
+            parsed = parse_sfc(args.input, strict=True)
+            write_sfc(
+                parsed,
+                args.output,
+                allow_external_references=args.allow_external_references,
+            )
+        except (ValueError, TypeError, OSError) as exc:
+            print(f"SFC save error: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    if args.command == "bundle-sfc":
+        try:
+            report = write_sfc_bundle(
+                args.input,
+                args.output_directory,
+                file_name=args.file_name,
+                extra_files=args.extra_file,
+            )
+        except (ValueError, TypeError, OSError) as exc:
+            print(f"SFC bundle error: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(report, ensure_ascii=False))
+        return 0
+
     if args.command == "plot":
         try:
             axes = plot(
@@ -168,11 +231,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 __all__ = [
+    "SfcDocument",
     "__version__",
+    "edit_sfc",
+    "edit_sfc_bundle",
     "hello_from_bin",
     "main",
+    "new_sfc",
     "parse_p21",
     "parse_sfc",
     "plot",
+    "serialize_sfc",
     "to_dxf",
+    "write_sfc",
+    "write_sfc_bundle",
+    "validate_saf",
 ]

@@ -3,6 +3,7 @@
 use crate::features::*;
 use crate::model::*;
 use crate::parser::*;
+use crate::writer::{serialize_sfc, SfcWriteOptions};
 use encoding_rs::SHIFT_JIS;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
@@ -15,6 +16,249 @@ FILE_DESCRIPTION(('SCADEC level2 feature_mode'),'2;1');
 FILE_NAME('sample.sfc','2007-06-29T07:56:58',('author'),('organization'),'translator$$3.1','system','');
 FILE_SCHEMA(('ASSOCIATIVE_DRAUGHTING'));
 ENDSEC;";
+
+const WRITER_FIXTURE: &str = include_str!("../tests/fixtures/writer_all_features.sfc");
+
+fn writer_options() -> SfcWriteOptions {
+    SfcWriteOptions {
+        allow_external_references: true,
+    }
+}
+
+fn writer_fixture() -> ParseOutput {
+    let output = parse_sfc_text(WRITER_FIXTURE, true).expect("writer fixture must parse");
+    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    output
+}
+
+fn writer_record(output: &mut ParseOutput, id: i64) -> &mut Record {
+    match &mut output
+        .document
+        .entities
+        .iter_mut()
+        .find(|entity| entity.id == id)
+        .unwrap()
+        .body
+    {
+        EntityBody::Simple(record) => record,
+        EntityBody::Complex(_) => panic!("fixture must contain simple SFC records"),
+    }
+}
+
+#[test]
+fn sfc_writer_round_trips_all_features_and_structure() {
+    let output = writer_fixture();
+    let kinds: HashSet<_> = output
+        .document
+        .typed_features
+        .iter()
+        .map(|feature| std::mem::discriminant(&feature.feature))
+        .collect();
+    assert_eq!(
+        kinds.len(),
+        34,
+        "fixture must always cover every feature type"
+    );
+    let model = output.document.sfc_model.as_ref().unwrap();
+    assert_eq!(model.sfig_definitions[0].component_ids, vec![14, 15]);
+    assert_eq!(model.sfig_definitions[1].component_ids, vec![17]);
+    assert_eq!(model.composite_curve_definitions[0].component_ids, vec![10]);
+    assert_eq!(model.composite_curve_definitions[1].component_ids, vec![12]);
+    assert_eq!(model.attribute_attachments.len(), 3);
+    assert_eq!(model.hatch_references.len(), 4);
+    assert_eq!(model.code_tables.layers[0].entity_id, 900);
+    assert_eq!(model.code_tables.layers[1].entity_id, 5);
+    let bytes = serialize_sfc(&output, writer_options()).unwrap();
+    assert!(bytes.windows(10).any(|value| value == b"/*SXF3.1\r\n"));
+    assert!(bytes.windows(8).any(|value| value == b"/*SXF3\r\n"));
+    assert!(!bytes.starts_with(&[0xef, 0xbb, 0xbf]));
+    let actual = parse_from_bytes(FileFormat::Sfc, &bytes, true).unwrap();
+    assert_eq!(actual, output);
+    assert_eq!(serialize_sfc(&actual, writer_options()).unwrap(), bytes);
+}
+
+#[test]
+fn sfc_writer_round_trips_available_real_corpus() {
+    let mut files = Vec::new();
+    collect_files_by_extension(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("data"),
+        "sfc",
+        &mut files,
+    );
+    // Public-package tests rely on WRITER_FIXTURE; local datasets are optional.
+    for path in files {
+        let output = parse_file(FileFormat::Sfc, &path);
+        let bytes = serialize_sfc(&output, writer_options())
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        assert_eq!(
+            parse_from_bytes(FileFormat::Sfc, &bytes, true).unwrap(),
+            output,
+            "{}",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn sfc_writer_requires_explicit_external_reference_preservation() {
+    let output = writer_fixture();
+    assert!(serialize_sfc(&output, SfcWriteOptions::default())
+        .unwrap_err()
+        .0
+        .contains("external SAF"));
+    assert!(serialize_sfc(&output, writer_options()).is_ok());
+}
+
+#[test]
+fn sfc_writer_refuses_partial_and_stale_models() {
+    let source = WRITER_FIXTURE.replace(
+        "#21 = line_feature('1','17','17','11','-1.000000','2.000000','3.000000','4.000000')",
+        "#21 = line_feature('1')",
+    );
+    let partial = parse_sfc_text(&source, true).unwrap();
+    assert!(!partial.warnings.is_empty());
+    assert!(serialize_sfc(&partial, writer_options())
+        .unwrap_err()
+        .0
+        .contains("warnings"));
+    let mut stale = writer_fixture();
+    stale
+        .document
+        .sfc_model
+        .as_mut()
+        .unwrap()
+        .sheet
+        .as_mut()
+        .unwrap()
+        .component_ids
+        .reverse();
+    assert!(serialize_sfc(&stale, writer_options())
+        .unwrap_err()
+        .0
+        .contains("disagree"));
+}
+
+#[test]
+fn sfc_writer_rejects_broken_order_references_and_unknown_features() {
+    let mut output = writer_fixture();
+    writer_record(&mut output, 21).parameters[0] = Value::String("777".into());
+    assert!(serialize_sfc(&output, writer_options())
+        .unwrap_err()
+        .0
+        .contains("validation failed"));
+    let mut output = writer_fixture();
+    let index = output
+        .document
+        .entities
+        .iter()
+        .position(|entity| entity.id == 19)
+        .unwrap();
+    let placement = output.document.entities.remove(index);
+    output.document.entities.insert(0, placement);
+    assert!(serialize_sfc(&output, writer_options()).is_err());
+    let mut output = writer_fixture();
+    writer_record(&mut output, 21).keyword = "unknown_feature".into();
+    assert!(serialize_sfc(&output, writer_options())
+        .unwrap_err()
+        .0
+        .contains("Unsupported"));
+    let mut output = writer_fixture();
+    output.document.entities[0].sfc_version = Some(SfcVersionTag::V31);
+    assert!(serialize_sfc(&output, writer_options())
+        .unwrap_err()
+        .0
+        .contains("marker"));
+}
+
+#[test]
+fn sfc_writer_validates_numeric_precision_and_ignored_style_fields() {
+    for (id, index, value) in [
+        (21, 4, "0.1234567"),
+        (29, 8, "0.1234567890123456"),
+        (29, 8, "0.000000000000001"),
+        (21, 4, "1E2"),
+        (21, 4, "NaN"),
+        (27, 1, "bad-color"),
+    ] {
+        let mut output = writer_fixture();
+        writer_record(&mut output, id).parameters[index] = Value::String(value.into());
+        assert!(
+            serialize_sfc(&output, writer_options()).is_err(),
+            "accepted {value}"
+        );
+    }
+    let mut output = writer_fixture();
+    writer_record(&mut output, 21).parameters[4] = Value::Real(f64::INFINITY);
+    assert!(serialize_sfc(&output, writer_options()).is_err());
+    let mut output = writer_fixture();
+    writer_record(&mut output, 29).parameters[8] = Value::Real(100_000_000_000_000.0);
+    assert!(serialize_sfc(&output, writer_options())
+        .unwrap_err()
+        .0
+        .contains("15 digits"));
+}
+
+#[test]
+fn sfc_writer_refuses_vertex_loss_even_if_reader_did_not_warn() {
+    let source = WRITER_FIXTURE.replace(
+        "label_feature('1','17','17','11','2'",
+        "label_feature('1','17','17','11','3'",
+    );
+    let output = parse_sfc_text(&source, true).unwrap();
+    assert!(output.warnings.is_empty());
+    assert!(serialize_sfc(&output, writer_options())
+        .unwrap_err()
+        .0
+        .contains("vertex count"));
+    let source = WRITER_FIXTURE.replace(
+        "balloon_feature('1','17','17','11','2','(1.000000,3.000000)','(2.000000,4.000000)'",
+        "balloon_feature('1','17','17','11','2','(1.000000,3.000000)','(2.000000,4.000000,6.000000)'",
+    );
+    let output = parse_sfc_text(&source, true).unwrap();
+    assert!(output.warnings.is_empty());
+    assert!(serialize_sfc(&output, writer_options()).is_err());
+}
+
+#[test]
+fn sfc_writer_preserves_string_delimiters_and_encoding() {
+    for value in [
+        "日本語 A'),B",
+        "quote',comma",
+        "C:\\folder\\",
+        "literal\\'",
+        "",
+        &"あ".repeat(128),
+    ] {
+        let source = WRITER_FIXTURE.replace(
+            "'土木'",
+            &format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''")),
+        );
+        // Use the sheet name to permit an empty string as well.
+        let source = if value.is_empty() {
+            WRITER_FIXTURE.replace("drawing_sheet_feature('図面'", "drawing_sheet_feature(''")
+        } else {
+            source
+        };
+        let output = parse_sfc_text(&source, true).unwrap();
+        assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+        let bytes = serialize_sfc(&output, writer_options()).unwrap();
+        assert_eq!(
+            parse_from_bytes(FileFormat::Sfc, &bytes, true).unwrap(),
+            output
+        );
+    }
+    let output = parse_sfc_text(&WRITER_FIXTURE.replace("'土木'", "'¥'"), true).unwrap();
+    assert!(output.warnings.is_empty());
+    assert!(serialize_sfc(&output, writer_options())
+        .unwrap_err()
+        .0
+        .contains("change SFC character"));
+    for text in ["あ".repeat(129), "emoji 😀".into(), "nul\0".into()] {
+        let mut output = writer_fixture();
+        writer_record(&mut output, 900).parameters[0] = Value::String(text);
+        assert!(serialize_sfc(&output, writer_options()).is_err());
+    }
+}
 
 fn collect_files_by_extension(root: &Path, ext: &str, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(root) else {
