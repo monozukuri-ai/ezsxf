@@ -18,6 +18,7 @@ New-Item -ItemType Directory $root | Out-Null
 $runtimeParent=if ($env:RUNNER_TEMP) {$env:RUNNER_TEMP} else {[IO.Path]::GetTempPath()}
 $runtime = Join-Path $runtimeParent ('ezsxf-cad-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $runtime | Out-Null
+$script:runFileToken=[Guid]::NewGuid().ToString('N').Substring(0,8)
 $pins = @{
     '10.03.6' = @('jww10036.exe', '64c629ab8eabfd0d2a54228c5bdb2c0ff0ed91ce77de30509fb1de109684d2a6')
     '8.25a' = @('jww825a.exe', '47632125be65d95c0a3722521dfa892cab2ecadd043194494e2e6feb12c87d78')
@@ -165,14 +166,18 @@ function Close-Cad {
 }
 function Open-Cad([string]$path, [string]$name) {
     $script:process=Start-Process $script:exe -ArgumentList ('"'+$path+'"') -WorkingDirectory (Split-Path $script:exe) -PassThru
+    $script:startupPromptHandled=$false
     [void](Await {
-        if ($script:process.HasExited) { throw 'CAD exited before showing its drawing window.' }
+        if ($script:process.HasExited) { throw ('CAD exited before showing its drawing window; exit code='+$script:process.ExitCode+'; association prompt cancelled='+$script:startupPromptHandled) }
         foreach ($row in @(Read-Windows $script:process)) {
             # Cancel only the known portable-installation association prompt.
             # The current user's JWW association remains unchanged.
             if ($row.class -eq '#32770' -and
-                @($row.children | Where-Object { $_.class -eq 'Static' -and $_.text -match '関連付け|file association' -and $_.text -match 'install\.exe' }).Count -gt 0 -and
+                $row.text -eq 'jw_win' -and
+                @($row.children | Where-Object { $_.class -eq 'Static' -and $_.text -match '関連付け|file association|^\s*Jww' -and $_.text -match 'install\.exe' }).Count -gt 0 -and
                 @($row.children | Where-Object { $_.class -eq 'Button' -and $_.id -eq 2 }).Count -eq 1) {
+                if (-not $script:startupPromptHandled) { [void](Snapshot $script:process ($name+'-association-prompt')) }
+                $script:startupPromptHandled=$true
                 [void][CadUI]::PostMessage([IntPtr]$row.handle,0x111,[IntPtr]2,[IntPtr]::Zero)
             }
         }
@@ -182,6 +187,9 @@ function Open-Cad([string]$path, [string]$name) {
     [void](Snapshot $script:process $name)
 }
 function Save-Cad([string]$stem, [string]$extension, [string]$previous='') {
+    # Fresh saves must never collide with files from an earlier review. Reuse
+    # only the path created by this run for the deliberate overwrite check.
+    $stem=if ($previous) { [IO.Path]::GetFileNameWithoutExtension($previous) } else { $stem+'_'+$script:runFileToken }
     $main=Main-Window
     $pattern=if ($extension -eq 'sfc') {'SFC.*保存'} else {'名前を付けて保存'}
     $command=$main.menus | Where-Object { $_.text -match $pattern } | Select-Object -First 1
