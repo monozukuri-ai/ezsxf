@@ -414,7 +414,7 @@ impl PythonSfcDocument {
         if let Some(changes) = changes {
             for (key, value) in changes {
                 let key = key.extract::<String>()?;
-                let value = if key == "points" {
+                let value = if matches!(key.as_str(), "points" | "vertices") {
                     points(&value)?
                 } else {
                     scalar(&value)?
@@ -428,6 +428,168 @@ impl PythonSfcDocument {
     }
     fn remove_element(&mut self, entity_id: i64) -> PyResult<()> {
         self.document.remove_element(entity_id).map_err(error)
+    }
+    #[pyo3(signature = (kind, **fields))]
+    fn add_feature(&mut self, kind: &str, fields: Option<&Bound<'_, PyDict>>) -> PyResult<i64> {
+        let mut changes = BTreeMap::new();
+        if let Some(fields) = fields {
+            for (key, value) in fields {
+                let key = key.extract::<String>()?;
+                let value = if matches!(key.as_str(), "points" | "vertices") {
+                    points(&value)?
+                } else {
+                    scalar(&value)?
+                };
+                changes.insert(key, value);
+            }
+        }
+        self.document.add_feature(kind, &changes).map_err(error)
+    }
+    #[pyo3(signature = (name, entity_ids, *, kind=3, position=(0.0,0.0), angle=0.0, scale=(1.0,1.0), layer=0))]
+    fn group_elements(
+        &mut self,
+        name: &str,
+        entity_ids: Vec<i64>,
+        kind: i64,
+        position: (f64, f64),
+        angle: f64,
+        scale: (f64, f64),
+        layer: i64,
+    ) -> PyResult<i64> {
+        self.document
+            .group_elements(
+                name,
+                &entity_ids,
+                kind,
+                &[
+                    string(layer),
+                    number(position.0),
+                    number(position.1),
+                    number(angle),
+                    number(scale.0),
+                    number(scale.1),
+                ],
+            )
+            .map_err(error)
+    }
+    fn ungroup(&mut self, placement_id: i64) -> PyResult<()> {
+        self.document.ungroup(placement_id).map_err(error)
+    }
+    fn add_to_group(&mut self, placement_id: i64, entity_ids: Vec<i64>) -> PyResult<()> {
+        self.document
+            .add_to_group(placement_id, &entity_ids)
+            .map_err(error)
+    }
+    #[pyo3(signature = (placement_id, *, position=(0.0,0.0), angle=0.0, scale=(1.0,1.0), layer=1))]
+    fn place_part(
+        &mut self,
+        placement_id: i64,
+        position: (f64, f64),
+        angle: f64,
+        scale: (f64, f64),
+        layer: i64,
+    ) -> PyResult<i64> {
+        self.document
+            .place_part(
+                placement_id,
+                &[
+                    string(layer),
+                    number(position.0),
+                    number(position.1),
+                    number(angle),
+                    number(scale.0),
+                    number(scale.1),
+                ],
+            )
+            .map_err(error)
+    }
+    fn rename_group(&mut self, placement_id: i64, name: &str) -> PyResult<()> {
+        self.document
+            .rename_group(placement_id, name)
+            .map_err(error)
+    }
+    #[pyo3(signature = (entity_ids, *, visible=false, color=1, line_type=1, line_width=1))]
+    fn add_composite_curve(
+        &mut self,
+        entity_ids: Vec<i64>,
+        visible: bool,
+        color: i64,
+        line_type: i64,
+        line_width: i64,
+    ) -> PyResult<i64> {
+        self.document
+            .add_composite_curve(&entity_ids, [color, line_type, line_width], visible)
+            .map_err(error)
+    }
+    #[pyo3(signature = (outer, *, holes=None, layer=1, color=1))]
+    fn add_fill(
+        &mut self,
+        outer: i64,
+        holes: Option<Vec<i64>>,
+        layer: i64,
+        color: i64,
+    ) -> PyResult<i64> {
+        self.document
+            .add_fill(outer, &holes.unwrap_or_default(), layer, color)
+            .map_err(error)
+    }
+    #[pyo3(signature = (outer, patterns, *, holes=None, layer=1))]
+    fn add_hatch(
+        &mut self,
+        outer: i64,
+        patterns: &Bound<'_, PyAny>,
+        holes: Option<Vec<i64>>,
+        layer: i64,
+    ) -> PyResult<i64> {
+        let rows = points(patterns)?;
+        let Value::List(rows) = rows else {
+            unreachable!()
+        };
+        let rows = rows
+            .into_iter()
+            .map(|r| {
+                let Value::List(v) = r else { unreachable!() };
+                v
+            })
+            .collect::<Vec<_>>();
+        self.document
+            .add_hatch(outer, &holes.unwrap_or_default(), layer, &rows)
+            .map_err(error)
+    }
+    #[pyo3(signature = (entity_id, outer, *, holes=None))]
+    fn update_hatch_boundaries(
+        &mut self,
+        entity_id: i64,
+        outer: i64,
+        holes: Option<Vec<i64>>,
+    ) -> PyResult<()> {
+        self.document
+            .update_hatch_boundaries(entity_id, outer, &holes.unwrap_or_default())
+            .map_err(error)
+    }
+    fn release_composite_curve(&mut self, entity_id: i64) -> PyResult<()> {
+        self.document
+            .release_composite_curve(entity_id)
+            .map_err(error)
+    }
+    fn update_hatch_patterns(
+        &mut self,
+        entity_id: i64,
+        patterns: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let Value::List(rows) = points(patterns)? else {
+            unreachable!()
+        };
+        let rows = rows
+            .into_iter()
+            .map(|r| {
+                let Value::List(v) = r else { unreachable!() };
+                v
+            })
+            .collect::<Vec<_>>();
+        self.document
+            .update_hatch_patterns(entity_id, &rows)
+            .map_err(error)
     }
 }
 

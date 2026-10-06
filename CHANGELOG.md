@@ -7,6 +7,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 ### Added
+- Named-field creation/editing of ellipses, ellipse arcs, splines, clothoids,
+  point markers, dimensions and leaders; ordinary group/part operations and
+  composite boundaries with solid fills and user-defined hatches.
+- Native Japanese-system-locale qualification controls and custom CAD case
+  manifests, including Windows PowerShell 5.1 script compatibility.
 - Strict SFC resaving with atomic replacement, model round-trip validation,
   external dependency bundle delivery, and basic-element creation/edit APIs.
 - SAF attribute creation, editing and removal; supported 3.0/3.1 XML validation;

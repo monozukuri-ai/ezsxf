@@ -1,9 +1,12 @@
-param(
+﻿param(
     [ValidateSet('10.03.6', '8.25a')][string]$Version = '10.03.6',
     [string]$InputDirectory = 'platform-verification',
     [string]$Output = 'cad-verification',
     [ValidateSet('', 'ja-JP')][string]$ProcessLocale = '',
-    [string]$DisplayDirectory = ''
+    [string]$DisplayDirectory = '',
+    [string]$ApplicationDirectory = '',
+    [string]$CaseManifest = '',
+    [switch]$RequireJapaneseLocale
 )
 $ErrorActionPreference = 'Stop'
 if ($ProcessLocale -and $Version -eq '10.03.6') {
@@ -12,7 +15,8 @@ if ($ProcessLocale -and $Version -eq '10.03.6') {
 if (Test-Path $Output) { throw 'The result directory must be new.' }
 $root = [IO.Path]::GetFullPath($Output)
 New-Item -ItemType Directory $root | Out-Null
-$runtime = Join-Path $env:RUNNER_TEMP ('ezsxf-cad-' + [Guid]::NewGuid().ToString('N'))
+$runtimeParent=if ($env:RUNNER_TEMP) {$env:RUNNER_TEMP} else {[IO.Path]::GetTempPath()}
+$runtime = Join-Path $runtimeParent ('ezsxf-cad-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $runtime | Out-Null
 $pins = @{
     '10.03.6' = @('jww10036.exe', '64c629ab8eabfd0d2a54228c5bdb2c0ff0ed91ce77de30509fb1de109684d2a6')
@@ -208,8 +212,22 @@ function Save-Cad([string]$stem, [string]$extension, [string]$previous='') {
     return $path
 }
 $report = @{version=$Version; platform=[Environment]::OSVersion.VersionString; ansi_codepage=[CadUI]::GetACP(); culture=[Globalization.CultureInfo]::CurrentCulture.Name; requested_process_locale=$ProcessLocale; native_windows=$true; mode='save, overwrite and reopen'; cases=@(); complete=$false}
+$report.system_locale=(Get-WinSystemLocale).Name
+$report.session=[Diagnostics.Process]::GetCurrentProcess().SessionId
 $process = $null
 try {
+    if ($RequireJapaneseLocale -and ($report.ansi_codepage -ne 932 -or $report.system_locale -ne 'ja-JP')) {
+        throw 'Japanese qualification requires the real ja-JP system locale and ANSI 932 after restart.'
+    }
+    if ($ApplicationDirectory) {
+        $app=[IO.Path]::GetFullPath($ApplicationDirectory)
+        $manifest=Get-Content (Join-Path $app 'application-hashes.json') -Raw | ConvertFrom-Json
+        foreach ($file in $manifest.PSObject.Properties) {
+            if ((Get-FileHash (Join-Path $app $file.Name) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $file.Value) { throw 'Application hash mismatch.' }
+        }
+        if (Test-Path (Join-Path $app 'Jw_win.exe.manifest')) { throw 'External application manifest is not allowed in the native locale control.' }
+        $exe=Join-Path $app 'Jw_win.exe'
+    } else {
     $pin = $pins[$Version]
     $installer = Join-Path $runtime $pin[0]
     & curl.exe --ipv4 --fail --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output $installer ('https://www.jwcad.net/download/' + $pin[0])
@@ -221,6 +239,7 @@ try {
     if ($setup.ExitCode -ne 0) { throw ('Installer failed: '+$setup.ExitCode) }
     $exe=Join-Path $app 'Jw_win.exe'
     $report.installer_sha256=$hash
+    }
     $report.application_sha256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
     $report.sxf_library_sha256=(Get-FileHash (Join-Path $app 'common_lib.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
     $report.japanese_fonts=@(Get-ChildItem (Join-Path $env:WINDIR 'Fonts') -File | Where-Object { $_.Name -match 'gothic|meiryo|yumin|yugoth|mincho' } | Select-Object -ExpandProperty Name)
@@ -228,6 +247,14 @@ try {
     $cases=@(@{id='basic';path=(Join-Path $InputDirectory 'created.sfc')}, @{id='quoted';path=(Join-Path $InputDirectory 'quoted.sfc')}, @{id='compound';path='tests/fixtures/writer_all_features.sfc'}, @{id='attributes';path=(Join-Path $InputDirectory 'cad-attributes/attributes.sfc')})
     if ($DisplayDirectory) {
         $cases+=@(@{id='display-text';path=(Join-Path $DisplayDirectory 'text.sfc')}, @{id='display-text-literal';path=(Join-Path $DisplayDirectory 'text-literal.sfc')}, @{id='display-saf';path=(Join-Path $DisplayDirectory 'attributes/attributes.sfc')}, @{id='display-images';path=(Join-Path $DisplayDirectory 'images/images.sfc')}, @{id='display-revised-images';path=(Join-Path $DisplayDirectory 'revised-images/images.sfc')})
+    }
+    if ($CaseManifest) {
+        $manifestPath=[IO.Path]::GetFullPath($CaseManifest)
+        $base=Split-Path $manifestPath
+        $items=Get-Content $manifestPath -Raw | ConvertFrom-Json
+        $cases=@(foreach($item in $items) { @{id=$item.id;path=(Join-Path $base $item.path)} })
+        if (@($cases | Where-Object id -eq 'basic').Count -ne 1) { throw 'The case manifest must contain one basic control.' }
+        if (@($cases | ForEach-Object {$_.id} | Select-Object -Unique).Count -ne $cases.Count) { throw 'Duplicate case IDs.' }
     }
     foreach ($case in $cases) {
         $input=[IO.Path]::GetFullPath($case.path)
