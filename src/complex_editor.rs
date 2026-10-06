@@ -275,7 +275,13 @@ impl SfcDocument {
         placement: Option<EntityInstance>,
     ) -> Result<(), WriteError> {
         let mut document = self.output.document.clone();
-        let start=document.entities.iter().rposition(|e|matches!(&e.body,EntityBody::Simple(r) if matches!(r.keyword.as_str(),"sfig_org_feature"|"composite_curve_feature"))).map_or_else(||document.entities.iter().position(|e|document.sfc_model.as_ref().unwrap().sheet.as_ref().unwrap().component_ids.contains(&e.id)).unwrap(),|i|i+1);
+        let start = document.entities.iter().rposition(|e| {
+            matches!(&e.body, EntityBody::Simple(r) if matches!(r.keyword.to_ascii_lowercase().as_str(), "sfig_org_feature" | "composite_curve_feature"))
+        }).map_or_else(|| {
+            document.entities.iter().position(|e| {
+                document.sfc_model.as_ref().unwrap().sheet.as_ref().unwrap().component_ids.contains(&e.id)
+            }).unwrap()
+        }, |i| i + 1);
         let original = document.entities.clone();
         let children: Vec<_> = original
             .iter()
@@ -659,7 +665,7 @@ impl SfcDocument {
         let EntityBody::Simple(r) = &mut document.entities[index].body else {
             unreachable!()
         };
-        let offset = match r.keyword.as_str() {
+        let offset = match r.keyword.to_ascii_lowercase().as_str() {
             "fill_area_style_colour_feature" => 2,
             "fill_area_style_hatching_feature" => 2 + r.parameters[1].as_i64().unwrap() as usize,
             _ => return Err(error("Not an editable fill or hatch")),
@@ -892,5 +898,42 @@ mod tests {
         assert_eq!(after, &before);
         assert_eq!(after[0].hatch_id, fill);
         assert_eq!(after[0].outer_definition_id, curves[1]);
+    }
+    #[test]
+    fn uppercase_existing_records_can_be_regrouped_and_retargeted() {
+        let mut doc = document();
+        let grouped = ellipse(&mut doc, 1.0);
+        doc.group_elements("existing", &[grouped], 3, &identity())
+            .unwrap();
+        let edge = doc
+            .add_polyline([1, 1, 1, 1], &[(0., 0.), (10., 0.), (10., 10.), (0., 0.)])
+            .unwrap();
+        let curve = doc.add_composite_curve(&[edge], [1, 1, 1], false).unwrap();
+        let fill = doc.add_fill(curve, &[], 1, 2).unwrap();
+        let sheet_element = ellipse(&mut doc, 20.0);
+        let bytes = doc.to_bytes(crate::SfcWriteOptions::default()).unwrap();
+        let mut text = encoding_rs::SHIFT_JIS.decode(&bytes).0.into_owned();
+        for e in &doc.output.document.entities {
+            if let EntityBody::Simple(r) = &e.body {
+                text = text.replace(&r.keyword, &r.keyword.to_ascii_uppercase());
+            }
+        }
+        let output = crate::parse_sfc_text(&text, true).unwrap();
+        let mut edited = SfcDocument::from_output(output).unwrap();
+        edited.update_hatch_boundaries(fill, curve, &[]).unwrap();
+        edited
+            .group_elements("new", &[sheet_element], 3, &identity())
+            .unwrap();
+        assert_eq!(
+            edited
+                .output
+                .document
+                .sfc_model
+                .as_ref()
+                .unwrap()
+                .sfig_definitions[0]
+                .component_ids,
+            vec![grouped]
+        );
     }
 }

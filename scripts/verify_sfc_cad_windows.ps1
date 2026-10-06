@@ -164,8 +164,20 @@ function Close-Cad {
     $script:process=$null
 }
 function Open-Cad([string]$path, [string]$name) {
-    $script:process=Start-Process $script:exe -ArgumentList ('"'+$path+'"') -PassThru
-    [void](Await { Main-Window })
+    $script:process=Start-Process $script:exe -ArgumentList ('"'+$path+'"') -WorkingDirectory (Split-Path $script:exe) -PassThru
+    [void](Await {
+        if ($script:process.HasExited) { throw 'CAD exited before showing its drawing window.' }
+        foreach ($row in @(Read-Windows $script:process)) {
+            # Cancel only the known portable-installation association prompt.
+            # The current user's JWW association remains unchanged.
+            if ($row.class -eq '#32770' -and
+                @($row.children | Where-Object { $_.class -eq 'Static' -and $_.text -match '関連付け|file association' -and $_.text -match 'install\.exe' }).Count -gt 0 -and
+                @($row.children | Where-Object { $_.class -eq 'Button' -and $_.id -eq 2 }).Count -eq 1) {
+                [void][CadUI]::PostMessage([IntPtr]$row.handle,0x111,[IntPtr]2,[IntPtr]::Zero)
+            }
+        }
+        Main-Window
+    })
     Start-Sleep -Seconds 2
     [void](Snapshot $script:process $name)
 }
