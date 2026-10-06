@@ -399,17 +399,19 @@ impl SfcDocument {
         ))?;
         Ok(code as i64)
     }
+    /// Reuse an exact-name font rather than creating duplicate table entries.
     pub fn add_font(&mut self, name: &str) -> Result<i64, WriteError> {
-        let code = self
-            .output
-            .document
-            .sfc_model
-            .as_ref()
-            .unwrap()
-            .code_tables
-            .text_fonts
-            .len()
-            + 1;
+        let document = &self.output.document;
+        let fonts = &document.sfc_model.as_ref().unwrap().code_tables.text_fonts;
+        for binding in fonts {
+            if document.typed_features.iter().any(|entry| {
+                entry.id == binding.entity_id
+                    && matches!(&entry.feature, TypedFeature::TextFont(font) if font.name == name)
+            }) {
+                return Ok(binding.code);
+            }
+        }
+        let code = fonts.len() + 1;
         self.add_definition(record("text_font_feature", vec![string(name)]))?;
         Ok(code as i64)
     }
@@ -462,6 +464,22 @@ fn numeric_text(value: &Value) -> Result<String, WriteError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn repeated_fonts_reuse_existing_codes_without_mutation() {
+        let mut doc =
+            SfcDocument::new("new.sfc", "drawing", 297, 210, "2026-10-06T00:00:00").unwrap();
+        let original = doc.snapshot().clone();
+        assert_eq!(doc.add_font("ＭＳ ゴシック").unwrap(), 1);
+        assert_eq!(*doc.snapshot(), original);
+        assert_eq!(doc.add_font("Arial").unwrap(), 2);
+        let with_arial = doc.snapshot().clone();
+        assert_eq!(doc.add_font("Arial").unwrap(), 2);
+        assert_eq!(doc.add_font("ＭＳ ゴシック").unwrap(), 1);
+        assert_eq!(*doc.snapshot(), with_arial);
+        assert_eq!(doc.add_font("Times New Roman").unwrap(), 3);
+        assert_eq!(doc.add_font("Arial").unwrap(), 2);
+    }
+
     #[test]
     fn edit_is_transactional_and_preserves_ids() {
         let mut doc = SfcDocument::new("new.sfc", "図面", 297, 210, "2026-10-05T00:00:00").unwrap();
