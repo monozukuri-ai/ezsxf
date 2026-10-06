@@ -53,7 +53,7 @@ class SfcWriterTest(unittest.TestCase):
                 with self.subTest(text=unsafe):
                     with self.assertRaisesRegex(ValueError, "literal_backslashes"):
                         doc.save(output, allow_external_references=True, literal_backslashes=True)
-                    with self.assertRaisesRegex(ValueError, "literal_backslashes"):
+                    with self.assertRaisesRegex(OSError, "literal_backslashes"):
                         doc.save_bundle(root / "rejected", literal_backslashes=True)
                     self.assertEqual(output.read_bytes(), encoded)
                     self.assertFalse((root / "rejected").exists())
