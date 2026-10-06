@@ -354,10 +354,12 @@ document = ezsxf.edit_sfc_bundle("source/D0PL001Z.SFC")
 document.save_bundle("reviewed-bundle")
 ```
 
-DynaCAD Viewer 9.0 / Wine displays a single glyph for the isolated backslash
-and each separator in `C:\\temp\\new.sfc` in a controlled input; the standard
-comparison displays doubled glyphs. CP932 characters `ソ 表` remain intact.
-The owned five-row generator also emits `text-literal.sfc` for native checks.
+DynaCAD Viewer 9.0 and VoiCeFREE 3.5.5.3 / Wine display a single glyph for each
+isolated backslash and each separator in `C:\temp\new.sfc` in the API-generated
+five-row input; the standard comparison displays doubled glyphs. Japanese,
+CP932 characters `ソ 予 表 申 能` and the mixed apostrophe/parenthesis/comma
+row remain intact. The owned generator emits `text-literal.sfc` for native
+checks as well.
 
 The legacy warning text was read through public Windows UI APIs:
 SAF could not be read, or its structure was invalid. In the normalized
@@ -385,4 +387,3 @@ is now restricted to 8.25a; the standalone verification script rejects it for
 resolved font names and placement independently of the operation gate, and
 requires those checks for 10.03.6. Earlier manifest-induced changes remain
 negative evidence rather than a claim about every Japanese Windows system.
-
