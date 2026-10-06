@@ -427,15 +427,15 @@ impl SfcDocument {
         self.add_definition(record("text_font_feature", vec![string(name)]))?;
         Ok(code as i64)
     }
-    fn add_definition(&mut self, record: Record) -> Result<(), WriteError> {
+    pub(crate) fn add_definition(&mut self, record: Record) -> Result<i64, WriteError> {
         // Append to this definition table; inserting before existing table
         // entries would silently renumber every existing code after insertion.
         let index = self.output.document.entities.iter().rposition(|e| matches!(&e.body, EntityBody::Simple(r) if r.keyword.eq_ignore_ascii_case(&record.keyword))).map(|i| i + 1).unwrap_or(0);
         let mut document = self.output.document.clone();
-        document
-            .entities
-            .insert(index, instance(self.next_id()?, record));
-        self.commit(document)
+        let id = self.next_id()?;
+        document.entities.insert(index, instance(id, record));
+        self.commit(document)?;
+        Ok(id)
     }
     pub fn rename_layer(&mut self, code: i64, name: &str) -> Result<(), WriteError> {
         let id = self

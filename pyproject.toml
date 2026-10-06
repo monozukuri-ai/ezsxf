@@ -1,7 +1,7 @@
 [project]
 name = "ezsxf"
-version = "0.1.2"
-description = "Fast SXF parser and drawing converter for Python powered by Rust"
+version = "0.2.0"
+description = "Fast SXF parser, SFC writer and drawing converter for Python powered by Rust"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
@@ -30,9 +30,9 @@ dev = ["maturin>=1.0,<2.0", "pytest>=8.0"]
 plot = ["matplotlib>=3.8"]
 
 [project.urls]
-Homepage = "https://github.com/nekanat/ezsxf"
-Repository = "https://github.com/nekanat/ezsxf"
-Issues = "https://github.com/nekanat/ezsxf/issues"
+Homepage = "https://github.com/monozukuri-ai/ezsxf"
+Repository = "https://github.com/monozukuri-ai/ezsxf"
+Issues = "https://github.com/monozukuri-ai/ezsxf/issues"
 
 [project.scripts]
 ezsxf = "ezsxf:main"

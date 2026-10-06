@@ -57,6 +57,15 @@ class SfcDocument:
     def add_font(self, name: str) -> int:
         """Return the existing exact-name font code, or append a new font."""
         ...
+    def add_color(self, color: str | tuple[int, int, int] | list[int]) -> int:
+        """Return the code of a predefined name or an exact RGB definition."""
+        ...
+    def add_line_type(self, name: str, *, pattern: list[float] | tuple[float, ...] | None = None) -> int:
+        """Use a predefined name, or 2/4/6/8 positive draw/gap lengths in mm."""
+        ...
+    def add_line_width(self, width_mm: float) -> int:
+        """Reuse an exact width or create a paper-mm width definition."""
+        ...
     def add_line(
         self,
         start: tuple[float, float],

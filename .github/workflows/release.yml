@@ -7,12 +7,21 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
+  qualify:
+    name: Qualify Rust source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --locked
+
   build:
-    name: Build ${{ matrix.os }} package
+    name: Build and qualify ${{ matrix.os }} wheel
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -24,81 +33,121 @@ jobs:
             target: universal2-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
           command: build
-          args: --release --target ${{ matrix.target }} --out dist
+          args: --locked --release --target ${{ matrix.target }} --out dist
           manylinux: auto
-
-      - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
+      - name: Install built wheel
+        run: python -c "import pathlib,subprocess,sys; wheel=next(pathlib.Path('dist').glob('*.whl')); subprocess.check_call([sys.executable,'-m','pip','install','--no-deps',str(wheel)])"
+      - name: Test installed wheel
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Verify writer and filesystem saves
+        run: |
+          python scripts/verify_sfc_mvp.py --output qualification/mvp
+          python scripts/verify_sfc_platform.py --output qualification/platform
+          python -m ezsxf
+      - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
           path: dist/*.whl
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qualification-${{ matrix.os }}
+          path: qualification
+          if-no-files-found: ignore
 
   source:
-    name: Build source distribution
+    name: Qualify sdist on minimum Python
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.9"
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist
-      - name: Upload source artifact
-        uses: actions/upload-artifact@v4
+      - name: Install from the packaged source
+        run: |
+          python -m pip install --no-deps dist/*.tar.gz
+          python -c "import pathlib,tarfile; archive=next(pathlib.Path('dist').glob('*.tar.gz')); tarfile.open(archive).extractall('packaged-source')"
+      - name: Test the installed source package using packaged tests
+        working-directory: packaged-source
+        run: |
+          cd ezsxf-*
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          python scripts/verify_sfc_mvp.py --output qualification/mvp
+          python -m ezsxf
+      - uses: actions/upload-artifact@v4
         with:
           name: sdist
           path: dist/*.tar.gz
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qualification-source-py39
+          path: packaged-source/*/qualification
+          if-no-files-found: ignore
 
   publish:
-    name: Publish release
-    needs: [build, source]
+    name: Publish qualified release
+    needs: [qualify, build, source]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
-      - name: Download wheels
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
           path: dist
           merge-multiple: true
-      - name: Download source distribution
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: sdist
           path: dist
-
-      - name: Verify artifacts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check versions, payload and hashes
+        env:
+          RELEASE_REF: ${{ github.ref }}
         run: |
-          python -m pip install --upgrade pip
-          linux_wheel=$(find dist -name '*manylinux*.whl' -o -name '*linux*.whl' | head -n 1)
-          test -n "$linux_wheel"
-          python -m pip install --no-deps "$linux_wheel"
-          python -c "import ezsxf; print(ezsxf.__version__)"
-
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [[ "$RELEASE_REF" == refs/tags/* ]]; then
+            test "$RELEASE_REF" = "refs/tags/v$version"
+          fi
+          python scripts/check_distribution.py dist --version "$version" --hashes SHA256SUMS
+          (cd dist && sha256sum --check ../SHA256SUMS)
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: pypa/gh-action-pypi-publish@release/v1
       - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: dist/*
-
-      - name: Publish to PyPI (tag releases only)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: pypa/gh-action-pypi-publish@release/v1
+          files: |
+            dist/*
+            SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qualified-distribution
+          path: |
+            dist/*
+            SHA256SUMS
+          if-no-files-found: error

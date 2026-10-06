@@ -6,7 +6,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-06
+
 ### Added
+- Style factories for predefined/RGB colours, predefined/custom line types and
+  paper-mm line widths, with definition reuse, stable codes and transactional
+  validation of pattern lengths, numeric precision and specification limits.
+- Documented basic writer contract, installed-package MVP verification inputs,
+  wheel/source payload checks and multi-platform release qualification.
 - Vendor-free CAD re-export inputs and a read-only comparison gate for basic
   geometry, group hierarchy/reuse, SAF bindings/values and TIFF/JPEG bytes.
 - Named-field creation/editing of ellipses, ellipse arcs, splines, clothoids,

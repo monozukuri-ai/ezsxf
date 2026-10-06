@@ -1,12 +1,12 @@
 [package]
 name = "ezsxf"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
-description = "Fast SXF parser and drawing converter for Python powered by Rust"
+description = "Fast SXF parser, SFC writer and drawing converter for Python powered by Rust"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/nekanat/ezsxf"
-homepage = "https://github.com/nekanat/ezsxf"
+repository = "https://github.com/monozukuri-ai/ezsxf"
+homepage = "https://github.com/monozukuri-ai/ezsxf"
 keywords = ["sxf", "p21", "sfc", "cad", "parser"]
 categories = ["parser-implementations", "encoding"]
 include = [
@@ -36,9 +36,22 @@ include = [
     "/tests/test_sfc_bundle.py",
     "/tests/test_sfc_editor.py",
     "/tests/test_sfc_attributes.py",
+    "/tests/test_sfc_complex_editor.py",
+    "/tests/test_sfc_reexport_verification.py",
+    "/tests/test_sfc_styles.py",
     "/scripts/verify_sfc_windows.ps1",
     "/scripts/verify_sfc_platform.py",
+    "/scripts/verify_sfc_mvp.py",
+    "/scripts/check_distribution.py",
+    "/scripts/prepare_sfc_cad.py",
+    "/scripts/prepare_sfc_display.py",
+    "/scripts/prepare_sfc_reexport.py",
+    "/scripts/verify_sfc_reexport.py",
+    "/scripts/verify_sfc_cad_text.py",
+    "/scripts/verify_sfc_cad_windows.ps1",
     "/docs/sfc-writer-validation.md",
+    "/docs/sfc-writer-mvp.md",
+    "/docs/sfc-editing.md",
     "/tests/fixtures/writer_all_features.sfc",
 ]
 

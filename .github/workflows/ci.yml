@@ -59,6 +59,9 @@ jobs:
       - name: Filesystem save verification
         run: python scripts/verify_sfc_platform.py --output platform-verification
 
+      - name: Basic writer MVP verification
+        run: python scripts/verify_sfc_mvp.py --output platform-verification/mvp
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
