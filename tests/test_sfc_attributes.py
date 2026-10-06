@@ -94,10 +94,13 @@ class SfcAttributesTest(unittest.TestCase):
             self.assertEqual([(p["x"], p["y"]) for p in polyline["points"]], [(80, 40), (80, 50), (100, 50), (100, 40), (80, 40)])
             doc.update_image(id_, (20, 30), 40, 20, angle=15, image=image, file_name="new.tif")
             result = doc.save_bundle(root / "bundle", file_name="新規.sfc")
-            self.assertEqual(result["files"], ["new.tif", "新規.SAF", "新規.sfc"])
+            self.assertEqual(result["files"], ["new.tif", "新規.sfc"])
+            self.assertIsNone(doc.saf_bytes())
             self.assertEqual((root / "bundle/new.tif").read_bytes(), TIFF)
             loaded = ezsxf.edit_sfc_bundle(root / "bundle/新規.sfc")
-            self.assertEqual(loaded.get_attributes(id_)[0]["value"], "new.tif")
+            attachment = loaded.to_dict()["model"]["attribute_attachments"][0]
+            self.assertEqual(attachment["attribute"]["mechanism"], "ATRU")
+            self.assertEqual(attachment["attribute"]["attribute_value"], "new.tif")
             before = loaded.to_dict()
             with self.assertRaises(ValueError):
                 loaded.update_element(id_, points=[(0, 0), (1, 1)])
@@ -110,6 +113,25 @@ class SfcAttributesTest(unittest.TestCase):
             loaded.remove_element(id_)
             loaded.save_bundle(root / "removed")
             self.assertEqual([p.name for p in (root / "removed").iterdir()], ["新規.sfc"])
+
+    def test_legacy_saf_image_edit_preserves_attribute_mechanism(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image = root / "scan.tif"
+            image.write_bytes(TIFF)
+            doc = ezsxf.new_sfc()
+            id_ = doc.add_polyline([(0, 0), (0, 10), (20, 10), (20, 0), (0, 0)])
+            doc.set_attribute(id_, "画像", "scan.tif", set_name="フィーチャ定義属性セット", set_version="1.0", designed_by="SCADEC")
+            doc.add_dependency(image)
+            doc.save_bundle(root / "legacy")
+            saf = root / "legacy/drawing.SAF"
+            saf.write_bytes(saf.read_bytes().replace(b'version="1.0"', b'version="0"'))
+            loaded = ezsxf.edit_sfc_bundle(root / "legacy/drawing.sfc")
+            loaded.update_image(id_, (10, 20), 40, 20, image=image, file_name="replacement.tif")
+            loaded.save_bundle(root / "updated")
+            self.assertEqual(loaded.get_attributes(id_)[0]["value"], "replacement.tif")
+            self.assertEqual(loaded.get_attributes(id_)[0]["set_version"], "0")
+            self.assertEqual((root / "updated/replacement.tif").read_bytes(), TIFF)
 
     def test_missing_file_reference_publishes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

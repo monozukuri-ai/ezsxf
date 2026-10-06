@@ -229,7 +229,11 @@ Unused dependencies are omitted. Loading captures dependency bytes, so later
 changes to source files do not affect the edited document.
 
 `add_image` and `update_image` accept TIFF/JPEG files and generate the standard
-`フィーチャ定義属性セット` image attribute and a clockwise closed rectangle.
+image attribute and a clockwise closed rectangle. New images use the SXF 3.1
+common-set ATRU mechanism and need no SAF of their own. Existing SXF 3.0
+SAF/ATRF images retain their mechanism when edited. Inline image metadata is
+available in `to_dict()["model"]["attribute_attachments"]`;
+`get_attributes` reads SAF attributes.
 The anchor is the lower-left corner; dimensions are sheet millimetres and angles
 are degrees. Computed corners are rounded to the SFC six-decimal coordinate
 limit. TIFF metadata must describe one page of G4 strips, monochrome 1-bit

@@ -124,8 +124,8 @@ function Save-Cad([string]$stem, [string]$extension, [string]$previous='') {
     [void](Snapshot $script:process ($stem+'-selector'))
     $button=$selector.children | Where-Object id -eq 2408
     [void][CadUI]::PostMessage([IntPtr]$button.handle,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
-    $dialog=Await { @(Read-Windows $script:process) | Where-Object { $_.handle -ne $selector.handle -and $_.class -eq '#32770' -and @($_.children | Where-Object { $_.class -eq 'Edit' -and $_.visible }).Count -eq 1 } | Select-Object -First 1 }
-    $edit=$dialog.children | Where-Object { $_.class -eq 'Edit' -and $_.visible }
+    $dialog=Await { @(Read-Windows $script:process) | Where-Object { $_.handle -ne $selector.handle -and $_.class -eq '#32770' -and @($_.children | Where-Object { $_.class -eq 'Edit' -and $_.id -eq 1491 -and $_.visible }).Count -eq 1 } | Select-Object -First 1 }
+    $edit=$dialog.children | Where-Object { $_.class -eq 'Edit' -and $_.id -eq 1491 }
     [void][CadUI]::SendMessage([IntPtr]$edit.handle,0xC,[IntPtr]::Zero,$stem)
     [void](Snapshot $script:process ($stem+'-filename'))
     $mtime=if ($previous) { (Get-Item $previous).LastWriteTimeUtc.Ticks } else { 0 }
@@ -172,12 +172,13 @@ try {
     $report.installer_sha256=$hash
     $report.application_sha256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
     $report.sxf_library_sha256=(Get-FileHash (Join-Path $app 'common_lib.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
-    foreach ($case in @(@{id='basic';path=(Join-Path $InputDirectory 'created.sfc')}, @{id='compound';path='tests/fixtures/writer_all_features.sfc'}, @{id='attributes';path=(Join-Path $InputDirectory 'cad-attributes/attributes.sfc')})) {
+    foreach ($case in @(@{id='basic';path=(Join-Path $InputDirectory 'created.sfc')}, @{id='quoted';path=(Join-Path $InputDirectory 'quoted.sfc')}, @{id='compound';path='tests/fixtures/writer_all_features.sfc'}, @{id='attributes';path=(Join-Path $InputDirectory 'cad-attributes/attributes.sfc')})) {
         $input=[IO.Path]::GetFullPath($case.path)
         $inputFolder=Split-Path $input
         $before=(Get-FileHash $input -Algorithm SHA256).Hash
         $evidence=Join-Path $root $case.id
         New-Item -ItemType Directory $evidence | Out-Null
+        Copy-Item $input (Join-Path $evidence 'input.sfc')
         $result=@{id=$case.id;input_sha256=$before;cad_save_completed=$false}
         try {
             Open-Cad $input ($case.id+'-input')
@@ -212,6 +213,9 @@ try {
         }
     }
     $report.complete=$true
+    $report.basic_save_completed=@($report.cases | Where-Object { $_.id -eq 'basic' -and $_.cad_save_completed -and $_.source_unchanged }).Count -eq 1
+    $report.cad_geometry_and_attachment_review='independent-review-required'
+    if (-not $report.basic_save_completed) { throw 'The basic native CAD save/overwrite/reopen did not complete.' }
 } finally {
     if ($null -ne $process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
     $report | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 (Join-Path $root 'verification.json')

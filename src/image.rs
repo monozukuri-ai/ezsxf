@@ -231,10 +231,46 @@ impl SfcDocument {
         &self,
         output: &crate::model::ParseOutput,
     ) -> Result<(), WriteError> {
+        let model = output.document.sfc_model.as_ref().unwrap();
+        let check = |attachment: &crate::model::SfcAttributeAttachment,
+                     name: &str|
+         -> Result<(), WriteError> {
+            if attachment.component_ids.len() != 1 {
+                return Err(error("Image attribute requires one polyline rectangle"));
+            }
+            let feature = output
+                .document
+                .typed_features
+                .iter()
+                .find(|f| f.id == attachment.component_ids[0])
+                .ok_or_else(|| error("Missing image polyline"))?;
+            let crate::model::TypedFeature::Polyline(polyline) = &feature.feature else {
+                return Err(error("Image attribute requires a polyline rectangle"));
+            };
+            validate_rectangle(&polyline.points)?;
+            crate::bundle::portable_name(name).map_err(error)
+        };
+        // SXF 3.1 common images use ATRU; legacy 3.0 bundles may use SAF/ATRF.
+        for attachment in &model.attribute_attachments {
+            if let crate::model::SfcAttributeMechanism::SingleAttribute {
+                attribute_name: Some(name),
+                attribute_value: Some(value),
+                attribute_type,
+                unit,
+                ..
+            } = &attachment.mechanism
+            {
+                if name == "画像" {
+                    if attribute_type.as_deref().is_some_and(|v| v != "STR") || unit.is_some() {
+                        return Err(error("Image ATRU requires STR type and no unit"));
+                    }
+                    check(attachment, value)?;
+                }
+            }
+        }
         let Some(saf) = &self.saf else {
             return Ok(());
         };
-        let model = output.document.sfc_model.as_ref().unwrap();
         for figure in &saf.figures {
             for (set_id, attrs) in &figure.sets {
                 for attribute in attrs.iter().filter(|a| a.name == "画像") {
@@ -255,17 +291,7 @@ impl SfcDocument {
                         return Err(error("Invalid image attribute set/type/group"));
                     }
                     let attachment = model.attribute_attachments.iter().find(|a| matches!(&a.mechanism,crate::model::SfcAttributeMechanism::AttributeFile {figure_id,..} if figure_id == &figure.id)).ok_or_else(|| error("Missing image ATRF"))?;
-                    let feature = output
-                        .document
-                        .typed_features
-                        .iter()
-                        .find(|f| f.id == attachment.component_ids[0])
-                        .ok_or_else(|| error("Missing image polyline"))?;
-                    let crate::model::TypedFeature::Polyline(polyline) = &feature.feature else {
-                        return Err(error("Image attribute requires a polyline rectangle"));
-                    };
-                    validate_rectangle(&polyline.points)?;
-                    crate::bundle::portable_name(&attribute.value).map_err(error)?;
+                    check(attachment, &attribute.value)?;
                 }
             }
         }
@@ -295,10 +321,9 @@ impl SfcDocument {
         let mut next = self.clone();
         let name = next.image_dependency(source, file_name)?;
         let id = next.add_polyline([layer, 1, 1, 1], &points)?;
-        next.set_attribute(
+        next.set_single_attribute(
             id,
             "image",
-            ("フィーチャ定義属性セット", "1.0", "SCADEC"),
             SafAttribute {
                 name: "画像".into(),
                 value: name,
@@ -321,16 +346,33 @@ impl SfcDocument {
         height: f64,
         angle: f64,
     ) -> Result<(), WriteError> {
-        let images: Vec<_> = self
-            .attributes(id)?
-            .into_iter()
-            .filter(|(s, a)| s.name == "フィーチャ定義属性セット" && a.name == "画像")
-            .collect();
-        if images.len() != 1 {
-            return Err(error(
-                "Element does not have one unambiguous SAF image attribute",
-            ));
-        }
+        self.editable_index(id)?;
+        let mechanism = self
+            .attachment(id)
+            .ok_or_else(|| error("Element has no image attribute"))?
+            .mechanism
+            .clone();
+        let legacy = match &mechanism {
+            crate::model::SfcAttributeMechanism::SingleAttribute {
+                attribute_name: Some(name),
+                attribute_value: Some(_),
+                ..
+            } if name == "画像" => None,
+            crate::model::SfcAttributeMechanism::AttributeFile { .. } => {
+                let images: Vec<_> = self
+                    .attributes(id)?
+                    .into_iter()
+                    .filter(|(s, a)| s.name == "フィーチャ定義属性セット" && a.name == "画像")
+                    .collect();
+                if images.len() != 1 {
+                    return Err(error(
+                        "Element does not have one unambiguous SAF image attribute",
+                    ));
+                }
+                images.into_iter().next()
+            }
+            _ => return Err(error("Element does not have an image attribute")),
+        };
         let points = rectangle(anchor, width, height, angle)?;
         let mut next = self.clone();
         let changes = [(
@@ -352,14 +394,33 @@ impl SfcDocument {
         next.update_element(id, &changes)?;
         if let Some(source) = source {
             let name = next.image_dependency(source, file_name)?;
-            let (set, mut attribute) = images.into_iter().next().unwrap();
-            attribute.value = name;
-            next.set_attribute(
-                id,
-                "image",
-                (&set.name, &set.version, &set.designed_by),
-                attribute,
-            )?;
+            if let Some((set, mut attribute)) = legacy {
+                attribute.value = name;
+                next.set_attribute(
+                    id,
+                    "image",
+                    (&set.name, &set.version, &set.designed_by),
+                    attribute,
+                )?;
+            } else if let crate::model::SfcAttributeMechanism::SingleAttribute {
+                figure_name: Some(figure_name),
+                ..
+            } = mechanism
+            {
+                next.set_single_attribute(
+                    id,
+                    &figure_name,
+                    SafAttribute {
+                        name: "画像".into(),
+                        value: name,
+                        attribute_type: Some("STR".into()),
+                        unit: None,
+                        group: vec![],
+                    },
+                )?;
+            } else {
+                return Err(error("Image ATRU is missing its figure name"));
+            }
         } else if file_name.is_some() {
             return Err(error("file_name requires a new image source"));
         }
