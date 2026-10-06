@@ -7,6 +7,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 ### Added
+- Vendor-free CAD re-export inputs and a read-only comparison gate for basic
+  geometry, group hierarchy/reuse, SAF bindings/values and TIFF/JPEG bytes.
 - Named-field creation/editing of ellipses, ellipse arcs, splines, clothoids,
   point markers, dimensions and leaders; ordinary group/part operations and
   composite boundaries with solid fills and user-defined hatches.
