@@ -9,11 +9,12 @@ Windows filesystem behavior are separate acceptance checks.
 | Real-file model round trip | Linux and native Windows: 20 SFCs, 46,305 entities/features. New saves and overwrites reparse to the original model; Windows output bytes match Linux output. Larger sample corpus is optional and not shipped in the package. |
 | External CAD ingestion | A fresh Jw_cad 10.02.1 / Wine 9.0 run opened original and ezsxf-resaved D0LS004Z drawings. JWW entities, settings, blocks, names, counts and diagnostics agree. The remaining header differences are in unused SXF line-type slot 30. |
 | All-feature CAD fixture | The corrected 52-record / 34-feature fixture and its ezsxf serialization now produce equal JWW entities, settings, blocks, names, counts and diagnostics. This establishes equal CAD ingestion, including the difficult text, within Jw_cad's import behavior; it does not establish preservation of every SXF feature's meaning. |
-| CAD-to-SFC save/reopen | Basic-element and Japanese-path/text/layer cases passed native CAD SFC Save As, close/reopen, confirmed same-name replacement and a second close/reopen on Linux/Wine. First-save and replacement SFC entities, typed features and structure agree exactly, without reader warnings. Compound real-file saves produced a native `30002: SFIG_LOCATE` error; their partial SFCs are not accepted. Native Windows CAD UI checks remain unrun. |
-| SAF bundle | Authored tests check matching figure IDs, physical/header/SAF names, unchanged dependency bytes, UTF-8/BOM/CP932 XML, local DTD copying, missing/ambiguous dependencies, unsafe names, rename consistency and destination protection. Image/DTD semantics and external CAD attachment display remain separate. |
+| CAD-to-SFC save/reopen | Jw_cad 10.03.6 on native Windows and 10.02.1 on Wine passed basic-element Save As, close/reopen, confirmed same-name replacement and a second close/reopen. Native Windows also passed a Japanese/special-character data case. First-save/replacement SFC entities, typed features and structure agree exactly without reader warnings; independent JWW geometry/style snapshots agree. Complex/attribute-figure exports fail on native Windows too. Text/raster display is qualified separately. |
+| SAF bundle and authoring | Tests cover attribute/group creation, update/removal, matching figure/set IDs, required XML fields, legacy 3.0 normalization, renamed physical/header/SAF references, unchanged dependencies, failed-edit rollback and exclusive directory publication. Owned 3.1 SAFs also pass the bundled DTD through xmllint. DTD contents, custom schemas, type/unit/value domains and external CAD attachment display remain separate. |
 | CAD SAF/image check | The original D0PL001Z SFC/SAF/TIFF bundle and the ezsxf bundle produce equal imported JWW models. The model retains the `$$ATRF$$1` block name but contains neither the TIFF filename nor a bitmap placement. This does not qualify SAF attribute or raster display; SFC export fails with the same compound-reference error. |
 | Real-file bundle | On Linux and native Windows, 19 of 20 local drawings delivered successfully, including 6 with actual SAF/image dependencies. All bundle file hashes match between platforms; 7 image dependencies were independently compared byte-for-byte with their sources. D4GV001Z was rejected because D4GV0011.TIF is missing from its SFC directory; no output directory was published for that case. |
-| Native Windows | Passed on Windows 11 Enterprise, build 26200, CPython 3.13.7 x64: 48 Rust tests, 38 Python tests (3 additional tests skipped), and all 6 platform save checks. This run used binaries cross-compiled on Linux and executed through the existing Azure Managed Run Command route in SYSTEM/session 0. Native MSVC source builds and Windows CI remain unrun. |
+| Native Windows MSVC build and saving | GitHub Windows Server 2025 build 26100, native `x86_64-pc-windows-msvc`, CPython 3.13.15: 52 Rust tests, 44 Python tests passed (3 skipped), all 8 platform save checks. Native build, strict clippy, fmt, package, installed-wheel import/CLI and SAF/image authoring checks passed. The earlier Windows 11/cloud run remains separate cross-compiled/corpus evidence. |
+| Real SAF/image editing | Linux: all 6 available real SAF bundles load, normalize and save; only explicit SAF filename spellings change in the SFC model. Moving/resizing/rotating all 7 image placements and reloading preserves their edited geometry and attributes, while retaining the original image bytes. Missing D4GV0011.TIF is rejected. This is data/API evidence, not a third-party raster display pass. |
 
 The CAD run used Jw_win.exe SHA-256
 `95e6b11c4ee014e0079f288429ae2c6e5eed41141a963e4b8770d2e8ead87acf`.
@@ -90,6 +91,78 @@ libraries, supplied drawings and runtime files remain excluded from distribution
 
 ## Recorded native Windows run
 
+The 2026-10-06 native MSVC source build passed in
+[GitHub Actions](https://github.com/monozukuri-ai/ezsxf/actions/runs/37397528538)
+at commit `af2f99783f46b53e764722272e7887c360bc668b`. The runner asserted the
+MSVC host triple, built and installed its own wheel, ran 52 Rust and 47 Python
+tests (44 passed, 3 skipped), and passed 8 filesystem checks, including authored
+SAF/ATRU image creation, editing, reload and collision protection. Linux
+independently verified all 15 artifact hashes from each platform; every file in
+the fixed-timestamp authored and revised bundles matches between Windows and
+Linux. Results are retained privately under `.local/internal/stage123-ci-atru/`.
+
+New image authoring uses ATRU, as required for SXF 3.1 common image attributes.
+Legacy SXF 3.0 SAF/ATRF images remain editable without changing their attachment
+mechanism. The clockwise, closed five-point rectangle follows the common
+attribute specification, section 3-4, pages 9-10. See also the
+[OCF common implementation rules, item 11, page 9](https://ocf.or.jp/pdf/kiyaku201104b.pdf).
+This format/API qualification does not certify pixel decoding or CAD raster
+display.
+
+### Native Windows CAD scope
+
+The native CAD check is recorded in
+[GitHub Actions](https://github.com/monozukuri-ai/ezsxf/actions/runs/37399497412)
+at commit `98bcbcbc25f7d8ab2a7f1e2a0dcfec9a71b7be30`, with private independent
+analysis under `.local/internal/stage123-native-final/`.
+Dedicated PowerShell/Win32 UI automation on an ephemeral Windows runner opened
+Jw_cad 10.03.6, saved owned basic and quoted-text inputs to JWW and SFC, closed
+and reopened the SFC, confirmed same-name replacement, and reopened again.
+The official installer and application hashes were checked. Each source stays
+unchanged, each output hash is recorded, and SFC first-save/replacement models
+agree strictly. Independent ezjww snapshots have zero resolved geometry/style
+differences between the initial import and final reopen. SFC values retain
+Japanese text, apostrophe, parenthesis, comma and a literal backslash.
+
+The native Windows run reproduces `30002: SFIG_LOCATE` for both the all-feature
+compound fixture and the owned SAF/ATRU image drawing. These failed/empty
+exports are retained as failure evidence and never counted as qualified saves.
+The same failure on native Windows rules out a Wine-only explanation; it does
+not identify the responsible component within Jw_cad or its SXF library.
+
+Jw_cad 8.25a can save/reopen the compound fixture under Wine, but the generated
+SFC gives drawing-group placements nonzero positions and prefixes attribute
+figure names. Strict reading rejects it; independent JWW comparisons find
+changes in names, styles and structures. Saving successfully is not accepted as
+compound or attribute preservation.
+
+The runner uses en-US and ANSI code page 1252. Screenshots show Japanese
+mojibake, and the readable Arial case displays two backslashes for a semantic
+single-backslash input. Independent JWW fields also retain extra backslashes.
+Matching imported/reopened snapshots and intact SFC semantic strings therefore
+do not qualify Japanese or literal-backslash display in that CAD/environment.
+SAF values and TIFF/JPEG display still require
+a compatible viewer. The official Autodesk viewer ZIP returned HTTP 403 in
+this environment; DynaCAD/Bigvan/V-nas downloads require registration. No
+registration or personal information was submitted. The existing Azure VM is
+not reconnected: the authenticated account lacked its subscription and the
+account-switch device code expired.
+
+The current automation is in `scripts/verify_sfc_cad_windows.ps1` and
+`.github/workflows/cad-windows.yml`. It operates only on its dedicated CAD
+process, obtains menus/control IDs from the actual application, retains UI
+screenshots and native outputs, and separately records operation success and
+independent review requirements. Third-party application downloads and vendor
+binaries are absent from package payloads.
+
+New image creation also accepted both real 4000x3000 JPEG dependencies and
+preserved their bytes through creation/save/reload. The supplied D0PL0011.TIF
+is 13087 pixels wide and is rejected for new authoring by the documented
+13000-pixel TIFF limit. Existing-bundle copying and placement-only editing
+preserve that legacy file; they do not revalidate or convert its pixels.
+
+### Earlier Windows cloud filesystem/corpus run
+
 The 2026-10-05 run installed the Windows wheel into a private, directory-local
 Python runtime. Its installed extension hash matched the wheel. New saves,
 overwrites and Japanese paths passed, as did preservation of an original file
@@ -115,7 +188,7 @@ them with the original models and Linux serialization, and checked bundle IDs,
 sheet structure and unchanged image bytes. The acceptance report and detailed
 logs remain private under `.local/internal/windows-cloud/`, including
 `independent-save-verification.json`. Temporary Run Commands and private Blob
-containers were removed, with absence checked. No CAD UI save/reopen was run.
+containers were removed, with absence checked. No CAD UI save/reopen was run in that earlier cloud check.
 
 ## Native Windows procedure
 
@@ -145,8 +218,10 @@ For independent CAD review, open `windows-verification/created.sfc` and
 Japanese text, layers and complex-feature conversions. Save `created.sfc` as
 `cad_saved.sfc` in that CAD, close and reopen it. Check both the newly created
 file and a subsequent overwrite. For SAF/image display, use a CAD that supports
-the relevant raster/attribute mechanism; the authored bundle contains a real
-1x1 BMP, but no raster placement is synthesized by the editor.
+the relevant raster/attribute mechanism. `authored/属性画像.sfc` and
+`revised/改訂.sfc` contain edited SAF attributes and an actual ATRU TIFF
+placement. The separate unedited-copy bundle uses an owned 1x1 BMP dependency
+and establishes dependency copying only.
 
 The manually saved SFC can then be inspected without UI automation:
 
@@ -170,6 +245,7 @@ python scripts/verify_sfc_platform.py --output platform-verification
 ```
 
 The platform script labels the native Windows locked-file check `not-run` on
-Linux. CI uploads the platform result separately for Ubuntu and Windows. No P21
-writer, new SAF attribute authoring, complex-element editor or OCF certificate
-is provided by these checks.
+Linux. CI uploads the platform result separately for Ubuntu and Windows. SAF
+attribute and TIFF/JPEG placement authoring are supported within the documented
+grammar/basic-element scope. No P21 writer, complex-element editor, complete
+CAD interchange guarantee or OCF certificate is provided by these checks.
