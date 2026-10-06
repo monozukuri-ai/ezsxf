@@ -1,13 +1,13 @@
 name: Windows CAD qualification
 
 on:
-  push:
-    branches: [codex/sfc-saf-windows-qualification]
-    paths:
-      - .github/workflows/cad-windows.yml
-      - scripts/verify_sfc_cad_windows.ps1
-      - scripts/prepare_sfc_cad.py
   workflow_dispatch:
+    inputs:
+      process_locale:
+        description: 'Dedicated CAD process locale (external-manifest experiment)'
+        type: choice
+        options: [ja-JP, default]
+        default: ja-JP
 
 permissions:
   contents: read
@@ -35,12 +35,38 @@ jobs:
         run: |
           python scripts/verify_sfc_platform.py --output platform-verification
           python scripts/prepare_sfc_cad.py platform-verification
+      - name: Probe official Autodesk viewer download
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory viewer-download-evidence | Out-Null
+          $path=Join-Path $env:RUNNER_TEMP 'ASV2014Build8219.zip'
+          $url='https://www.autodesk.com/temp/files/ASV2014Build8219.zip'
+          $status=(& curl.exe --silent --show-error --location --connect-timeout 20 --max-time 55 --output $path --write-out '%{http_code}' $url)
+          $report=@{url=$url;http_status=$status;exit_code=$LASTEXITCODE;archive_available=$false}
+          if (Test-Path $path) {
+            $report.sha256=(Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $report.bytes=(Get-Item $path).Length
+            if ($status -eq '200') {
+              Add-Type -AssemblyName System.IO.Compression.FileSystem
+              $zip=[IO.Compression.ZipFile]::OpenRead($path)
+              try { $report.entries=@($zip.Entries | Select-Object -ExpandProperty FullName); $report.archive_available=$true } finally { $zip.Dispose() }
+            }
+          }
+          $report | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 viewer-download-evidence/download.json
       - name: Qualify dedicated CAD process
         shell: pwsh
-        run: ./scripts/verify_sfc_cad_windows.ps1 -Version '${{ matrix.version }}'
+        run: |
+          $locale=if ('${{ inputs.process_locale }}' -eq 'ja-JP') {'ja-JP'} else {''}
+          ./scripts/verify_sfc_cad_windows.ps1 -Version '${{ matrix.version }}' -ProcessLocale $locale
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: native-cad-${{ matrix.version }}
           path: cad-verification
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: viewer-download-${{ matrix.version }}
+          path: viewer-download-evidence
+          if-no-files-found: ignore

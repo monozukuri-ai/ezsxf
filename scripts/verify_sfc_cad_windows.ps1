@@ -1,7 +1,8 @@
 param(
     [ValidateSet('10.03.6', '8.25a')][string]$Version = '10.03.6',
     [string]$InputDirectory = 'platform-verification',
-    [string]$Output = 'cad-verification'
+    [string]$Output = 'cad-verification',
+    [ValidateSet('', 'ja-JP')][string]$ProcessLocale = ''
 )
 $ErrorActionPreference = 'Stop'
 if (Test-Path $Output) { throw 'The result directory must be new.' }
@@ -38,6 +39,12 @@ public class CadUI {
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);
     [DllImport("kernel32.dll")] public static extern uint GetACP();
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr LoadLibraryEx(string file, IntPtr reserved, uint flags);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindResource(IntPtr module, IntPtr name, IntPtr type);
+    [DllImport("kernel32.dll")] public static extern uint SizeofResource(IntPtr module, IntPtr resource);
+    [DllImport("kernel32.dll")] public static extern IntPtr LoadResource(IntPtr module, IntPtr resource);
+    [DllImport("kernel32.dll")] public static extern IntPtr LockResource(IntPtr resource);
+    [DllImport("kernel32.dll")] public static extern bool FreeLibrary(IntPtr module);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out Rect r);
     public struct Rect { public int Left, Top, Right, Bottom; }
     public static string Text(IntPtr h) { var b=new StringBuilder(2048); if(Class(h)=="Edit") SendMessage(h,0xD,(IntPtr)b.Capacity,b); else GetWindowText(h,b,b.Capacity); return b.ToString(); }
@@ -52,6 +59,45 @@ public class CadUI {
     }
 }
 '@
+function Set-ProcessLocale([string]$exe, [string]$locale) {
+    # This is an ephemeral-runner compatibility experiment. Keep the vendor EXE
+    # untouched and verify external-manifest priority with a separate x86 probe.
+    $module=[CadUI]::LoadLibraryEx($exe,[IntPtr]::Zero,2)
+    if ($module -eq [IntPtr]::Zero) { throw 'Cannot read the original application manifest.' }
+    try {
+        $resource=[CadUI]::FindResource($module,[IntPtr]1,[IntPtr]24)
+        if ($resource -eq [IntPtr]::Zero) { throw 'The original application manifest was not found.' }
+        $bytes=[byte[]]::new([CadUI]::SizeofResource($module,$resource))
+        [Runtime.InteropServices.Marshal]::Copy([CadUI]::LockResource([CadUI]::LoadResource($module,$resource)),$bytes,0,$bytes.Length)
+        $xml=[xml][Text.Encoding]::UTF8.GetString($bytes).Trim([char]0,[char]0xFEFF)
+    } finally { [void][CadUI]::FreeLibrary($module) }
+    $ns=[Xml.XmlNamespaceManager]::new($xml.NameTable)
+    $ns.AddNamespace('a','urn:schemas-microsoft-com:asm.v1')
+    $ns.AddNamespace('v3','urn:schemas-microsoft-com:asm.v3')
+    $settings=$xml.SelectSingleNode('/a:assembly/v3:application/v3:windowsSettings',$ns)
+    if ($null -eq $settings) { throw 'The original manifest has no Windows settings.' }
+    $active=$xml.CreateElement('activeCodePage','http://schemas.microsoft.com/SMI/2019/WindowsSettings')
+    $active.InnerText=$locale
+    [void]$settings.AppendChild($active)
+    $manifest=$exe+'.manifest'
+    $xml.Save($manifest)
+    Copy-Item $manifest (Join-Path $root 'process-locale.manifest')
+    $script:manifestRegistry='HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\SideBySide'
+    $prior=Get-ItemProperty $script:manifestRegistry -Name PreferExternalManifest -ErrorAction SilentlyContinue
+    $script:manifestPrior=if ($null -eq $prior) {$null} else {$prior.PreferExternalManifest}
+    Set-ItemProperty $script:manifestRegistry -Name PreferExternalManifest -Value 1 -Type DWord
+    $probe=Join-Path $runtime 'codepage-probe.exe'
+    $source=Join-Path $runtime 'codepage-probe.cs'
+    'using System; using System.Runtime.InteropServices; class Probe { [DllImport("kernel32.dll")] static extern uint GetACP(); static void Main() { Console.WriteLine(GetACP()); } }' | Set-Content -Encoding utf8 $source
+    $baseManifest=Join-Path $runtime 'codepage-default.manifest'
+    $xml.OuterXml.Replace('>ja-JP<','>en-US<') | Set-Content -Encoding utf8 $baseManifest
+    & (Join-Path $env:WINDIR 'Microsoft.NET/Framework/v4.0.30319/csc.exe') /nologo /platform:x86 ('/out:'+$probe) ('/win32manifest:'+$baseManifest) $source
+    if ($LASTEXITCODE -ne 0) { throw 'Code page probe compilation failed.' }
+    Copy-Item $manifest ($probe+'.manifest')
+    $codepage=(& $probe).Trim()
+    if ($LASTEXITCODE -ne 0 -or $codepage -ne '932') { throw ('The external Japanese manifest was not effective: '+$codepage) }
+    return [int]$codepage
+}
 function Read-Menu([IntPtr]$menu, [string]$parent) {
     for ($i=0; $i -lt [CadUI]::GetMenuItemCount($menu); $i++) {
         $text = [Text.StringBuilder]::new(512)
@@ -157,7 +203,7 @@ function Save-Cad([string]$stem, [string]$extension, [string]$previous='') {
     [void](Snapshot $script:process ($stem+'-saved'))
     return $path
 }
-$report = @{version=$Version; platform=[Environment]::OSVersion.VersionString; ansi_codepage=[CadUI]::GetACP(); culture=[Globalization.CultureInfo]::CurrentCulture.Name; native_windows=$true; mode='save, overwrite and reopen'; cases=@(); complete=$false}
+$report = @{version=$Version; platform=[Environment]::OSVersion.VersionString; ansi_codepage=[CadUI]::GetACP(); culture=[Globalization.CultureInfo]::CurrentCulture.Name; requested_process_locale=$ProcessLocale; native_windows=$true; mode='save, overwrite and reopen'; cases=@(); complete=$false}
 $process = $null
 try {
     $pin = $pins[$Version]
@@ -173,6 +219,8 @@ try {
     $report.installer_sha256=$hash
     $report.application_sha256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
     $report.sxf_library_sha256=(Get-FileHash (Join-Path $app 'common_lib.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
+    $report.japanese_fonts=@(Get-ChildItem (Join-Path $env:WINDIR 'Fonts') -File | Where-Object { $_.Name -match 'gothic|meiryo|yumin|yugoth|mincho' } | Select-Object -ExpandProperty Name)
+    if ($ProcessLocale) { $report.external_manifest_probe_codepage=Set-ProcessLocale $exe $ProcessLocale }
     foreach ($case in @(@{id='basic';path=(Join-Path $InputDirectory 'created.sfc')}, @{id='quoted';path=(Join-Path $InputDirectory 'quoted.sfc')}, @{id='compound';path='tests/fixtures/writer_all_features.sfc'}, @{id='attributes';path=(Join-Path $InputDirectory 'cad-attributes/attributes.sfc')})) {
         $input=[IO.Path]::GetFullPath($case.path)
         $inputFolder=Split-Path $input
@@ -224,5 +272,10 @@ try {
     if (-not $report.basic_save_completed) { throw 'The basic native CAD save/overwrite/reopen did not complete.' }
 } finally {
     if ($null -ne $process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+    if ($script:manifestRegistry) {
+        if ($null -eq $script:manifestPrior) { Remove-ItemProperty $script:manifestRegistry -Name PreferExternalManifest }
+        else { Set-ItemProperty $script:manifestRegistry -Name PreferExternalManifest -Value $script:manifestPrior -Type DWord }
+    }
+    if ($exe -and (Test-Path $exe)) { $report.application_unchanged=((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant() -eq $report.application_sha256) }
     $report | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 (Join-Path $root 'verification.json')
 }
