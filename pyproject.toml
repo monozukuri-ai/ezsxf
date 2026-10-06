@@ -41,6 +41,7 @@ ezsxf = "ezsxf:main"
 module-name = "ezsxf._core"
 python-packages = ["ezsxf"]
 python-source = "src"
+exclude = [".local/**"]
 
 [build-system]
 requires = ["maturin>=1.0,<2.0"]

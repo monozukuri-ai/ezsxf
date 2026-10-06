@@ -18,11 +18,18 @@ line_type = doc.add_line_type("独自線", pattern=[5, 2, 1, 2])
 line_width = doc.add_line_width(0.42)
 line = doc.add_line((10, 10), (100, 10), layer=layer, color=color,
                     line_type=line_type, line_width=line_width)
+doc.add_circle((50, 50), 10, layer=layer)
+doc.add_arc((80, 50), 10, 0, 90, layer=layer)
+doc.add_polyline([(10, 70), (30, 80), (50, 70)], layer=layer)
 doc.add_text("日本語", (10, 30), height=3.5, width=30, layer=layer)
 doc.update_element(line, end_x=120.125)
 doc.save("drawing.sfc")
 assert ezsxf.parse_sfc("drawing.sfc", strict=True) == doc.to_dict()
 ```
+
+`new_sfc` creates a free-size sheet in millimetres, layer code 1 and font code 1.
+Default styles are black, continuous and 0.13 mm. Its optional `timestamp`
+defaults to the local current datetime; specify it for reproducible output.
 
 Factories return **SXF codes**, while geometry additions return **entity IDs**.
 Always pass the returned codes to geometry methods; a code is not an entity ID.
@@ -55,6 +62,36 @@ Predefined colours: `black`, `red`, `green`, `blue`, `yellow`, `magenta`, `cyan`
 `double-dashed double-dotted`, `dashed triplicate-dotted`,
 `double-dashed triplicate-dotted`.
 
+## Editing basic elements
+
+`update_element(id, **changes)` retains unspecified fields, the entity ID and
+record order. `remove_element(id)` checks references before removing a record.
+For the `line` ID returned in the example above:
+
+```python
+existing = ezsxf.edit_sfc(ezsxf.parse_sfc("drawing.sfc"))
+existing.update_element(line, start_x=5, start_y=10)
+existing.remove_element(line)
+existing.save("drawing.sfc")
+```
+
+For a different drawing, obtain its entity IDs from `typed_features` or `model`.
+The supported basic geometry changes are:
+
+| Element | Fields |
+| --- | --- |
+| Line | `start_x`, `start_y`, `end_x`, `end_y` |
+| Circle | `center_x`, `center_y`, `radius` |
+| Circular arc | `center_x`, `center_y`, `radius`, `direction`, `start_angle`, `end_angle` |
+| Polyline | `points`, containing at least two coordinate pairs |
+| Text | `text`, `x`, `y`, `height`, `width`, `spacing`, `angle`, `slant`, `base_point`, `direction` |
+
+All five types accept `layer` and `color`; curves also accept `line_type` and
+`line_width`, and text accepts `font`. Use definition codes returned by the
+factories. Unknown fields, unsupported edits and invalid numeric values fail.
+For children of groups or composite curves, coordinates are local to their
+owner; see [complex editing](sfc-editing.md) for references and hierarchy limits.
+
 ## Geometry, numbers and strings
 
 - Coordinates, radii and text box sizes are sheet millimetres. Positive X points
@@ -78,11 +115,14 @@ Predefined colours: `black`, `red`, `green`, `blue`, `yellow`, `magenta`, `cyan`
   provides a separately tested compatibility mode and rejects ambiguous strings;
   it does not change the standard default or guarantee all CAD rendering.
 
-## State, saving and qualification
+## State and saving
 
 Edits validate a candidate in Rust before committing. A failed edit keeps the
 document unchanged. `to_dict()` returns an independent snapshot; a modified
 snapshot must remain consistent with its typed/model caches to be writable.
+`to_bytes()` uses the same validated serializer. Existing header metadata is
+retained. Both `to_bytes` and `save` require `allow_external_references=True`
+to retain external SAF references; that flag does not copy their dependencies.
 `save(path)` validates, encodes and atomically replaces a regular destination;
 it preserves an existing file after validation failure. Symlink destinations
 are rejected. It does not provide power-loss durability.
@@ -92,21 +132,9 @@ Use the existing bundle APIs for those dependencies; they have a separate
 acceptance scope. P21 output, complete CAD editing support and lossless re-export
 through arbitrary third-party CAD are outside this basic contract.
 
-Run against an installed wheel or a package built from its source distribution:
+For complete save semantics and external dependencies, see [SFC saving](sfc-writing.md)
+and [SAF/image bundles](sfc-bundles.md). See [compatibility](compatibility.md) for
+CAD display and re-export limits.
 
-```sh
-python scripts/verify_sfc_mvp.py --output new-verification-directory
-python -m unittest discover -s tests -p 'test_*.py' -v
-```
-
-The first command checks five primitives with predefined/custom styles, edited
-geometry, strict structural equality, deterministic output with a fixed
-timestamp, CP932 Japanese/backslashes, new/existing Japanese paths, failure
-rollback and installed type information. It produces owned CAD inputs and hashes.
-It does **not** perform a CAD visual check. Platform/package and external CAD
-evidence are described in [writer validation](sfc-writer-validation.md).
-
-Reference: SXF Ver.3.1 Feature Specification, second edition, printed pp.12–17
-(style definitions/codes), pp.24 and 28 (arcs/text). The SFC encoding specification
-defines numeric spelling and quoting; bundled reference PDFs are read-only and
-are not distributed as package contents.
+The style and geometry definitions follow the SXF Ver.3.1 Feature Specification,
+second edition, printed pp.12–17 (style codes), pp.24 and 28 (arcs and text).

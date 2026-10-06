@@ -16,6 +16,8 @@ include = [
     "/README.md",
     "/LICENSE",
     "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/CODE_OF_CONDUCT.md",
     "/src/*.rs",
     "/src/ezsxf/__init__.py",
     "/src/ezsxf/__main__.py",
@@ -49,9 +51,7 @@ include = [
     "/scripts/verify_sfc_reexport.py",
     "/scripts/verify_sfc_cad_text.py",
     "/scripts/verify_sfc_cad_windows.ps1",
-    "/docs/sfc-writer-validation.md",
-    "/docs/sfc-writer-mvp.md",
-    "/docs/sfc-editing.md",
+    "/docs/*.md",
     "/tests/fixtures/writer_all_features.sfc",
 ]
 
