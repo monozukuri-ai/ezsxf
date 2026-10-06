@@ -33,8 +33,10 @@ jobs:
           python -c "import pathlib,subprocess,sys; subprocess.check_call([sys.executable,'-m','pip','install',str(next(pathlib.Path('dist').glob('*.whl')))])"
       - name: Prepare CAD review files
         run: |
+          python -m pip install Pillow
           python scripts/verify_sfc_platform.py --output platform-verification
           python scripts/prepare_sfc_cad.py platform-verification
+          python scripts/prepare_sfc_display.py display-review
       - name: Probe official Autodesk viewer download
         shell: pwsh
         run: |
@@ -57,7 +59,7 @@ jobs:
         shell: pwsh
         run: |
           $locale=if ('${{ inputs.process_locale }}' -eq 'ja-JP') {'ja-JP'} else {''}
-          ./scripts/verify_sfc_cad_windows.ps1 -Version '${{ matrix.version }}' -ProcessLocale $locale
+          ./scripts/verify_sfc_cad_windows.ps1 -Version '${{ matrix.version }}' -ProcessLocale $locale -DisplayDirectory display-review
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -70,3 +72,9 @@ jobs:
           name: viewer-download-${{ matrix.version }}
           path: viewer-download-evidence
           if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: display-inputs-${{ matrix.version }}
+          path: display-review
+          if-no-files-found: error

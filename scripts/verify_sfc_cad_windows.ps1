@@ -2,7 +2,8 @@ param(
     [ValidateSet('10.03.6', '8.25a')][string]$Version = '10.03.6',
     [string]$InputDirectory = 'platform-verification',
     [string]$Output = 'cad-verification',
-    [ValidateSet('', 'ja-JP')][string]$ProcessLocale = ''
+    [ValidateSet('', 'ja-JP')][string]$ProcessLocale = '',
+    [string]$DisplayDirectory = ''
 )
 $ErrorActionPreference = 'Stop'
 if (Test-Path $Output) { throw 'The result directory must be new.' }
@@ -221,7 +222,11 @@ try {
     $report.sxf_library_sha256=(Get-FileHash (Join-Path $app 'common_lib.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
     $report.japanese_fonts=@(Get-ChildItem (Join-Path $env:WINDIR 'Fonts') -File | Where-Object { $_.Name -match 'gothic|meiryo|yumin|yugoth|mincho' } | Select-Object -ExpandProperty Name)
     if ($ProcessLocale) { $report.external_manifest_probe_codepage=Set-ProcessLocale $exe $ProcessLocale }
-    foreach ($case in @(@{id='basic';path=(Join-Path $InputDirectory 'created.sfc')}, @{id='quoted';path=(Join-Path $InputDirectory 'quoted.sfc')}, @{id='compound';path='tests/fixtures/writer_all_features.sfc'}, @{id='attributes';path=(Join-Path $InputDirectory 'cad-attributes/attributes.sfc')})) {
+    $cases=@(@{id='basic';path=(Join-Path $InputDirectory 'created.sfc')}, @{id='quoted';path=(Join-Path $InputDirectory 'quoted.sfc')}, @{id='compound';path='tests/fixtures/writer_all_features.sfc'}, @{id='attributes';path=(Join-Path $InputDirectory 'cad-attributes/attributes.sfc')})
+    if ($DisplayDirectory) {
+        $cases+=@(@{id='display-text';path=(Join-Path $DisplayDirectory 'text.sfc')}, @{id='display-saf';path=(Join-Path $DisplayDirectory 'attributes/attributes.sfc')}, @{id='display-images';path=(Join-Path $DisplayDirectory 'images/images.sfc')}, @{id='display-revised-images';path=(Join-Path $DisplayDirectory 'revised-images/images.sfc')})
+    }
+    foreach ($case in $cases) {
         $input=[IO.Path]::GetFullPath($case.path)
         $inputFolder=Split-Path $input
         $before=(Get-FileHash $input -Algorithm SHA256).Hash
