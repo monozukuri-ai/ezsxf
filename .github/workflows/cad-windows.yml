@@ -6,8 +6,8 @@ on:
       process_locale:
         description: 'Dedicated CAD process locale (external-manifest experiment)'
         type: choice
-        options: [ja-JP, default]
-        default: ja-JP
+        options: [default, ja-JP]
+        default: default
 
 permissions:
   contents: read

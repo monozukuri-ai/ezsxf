@@ -53,8 +53,10 @@ def prepare(root: Path) -> None:
     text_doc = ezsxf.new_sfc("text.sfc", timestamp="2026-10-06T00:00:00")
     for index, (text, font) in enumerate(texts):
         code = text_doc.add_font(font)
-        text_doc.add_text(text, (20, 170 - index * 30), height=8,
-                          width=4 * len(text.encode("cp932")), font=code)
+        text_doc.add_text(
+            text, (20, 170 - index * 30), height=8,
+            width=4 * len(text.encode("cp932")), font=code,
+        )
     text_doc.save(root / "text.sfc")
     attributes = ezsxf.new_sfc("attributes.sfc", timestamp="2026-10-06T00:00:00")
     target = attributes.add_circle((50, 50), 10)

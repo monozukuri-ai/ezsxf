@@ -11,7 +11,7 @@ Windows filesystem behavior are separate acceptance checks.
 | All-feature CAD fixture | The corrected 52-record / 34-feature fixture and its ezsxf serialization now produce equal JWW entities, settings, blocks, names, counts and diagnostics. This establishes equal CAD ingestion, including the difficult text, within Jw_cad's import behavior; it does not establish preservation of every SXF feature's meaning. |
 | CAD-to-SFC save/reopen | Jw_cad 10.03.6 on native Windows and 10.02.1 on Wine passed basic-element Save As, close/reopen, confirmed same-name replacement and a second close/reopen. Native Windows also passed a Japanese/special-character data case. First-save/replacement SFC entities, typed features and structure agree exactly without reader warnings; independent JWW geometry/style snapshots agree. Complex/attribute-figure exports fail on native Windows too. Text/raster display is qualified separately. |
 | SAF bundle and authoring | Tests cover attribute/group creation, update/removal, matching figure/set IDs, required XML fields, legacy 3.0 normalization, renamed physical/header/SAF references, unchanged dependencies, failed-edit rollback and exclusive directory publication. Owned 3.1 SAFs also pass the bundled DTD through xmllint. DTD contents, custom schemas, type/unit/value domains and external CAD attachment display remain separate. |
-| CAD SAF/image check | The original D0PL001Z SFC/SAF/TIFF bundle and the ezsxf bundle produce equal imported JWW models. The model retains the `$$ATRF$$1` block name but contains neither the TIFF filename nor a bitmap placement. This does not qualify SAF attribute or raster display; SFC export fails with the same compound-reference error. |
+| CAD SAF/image check | DynaCAD Viewer 9.0 on Wine displays owned SAF attribute values and actual ATRU TIFF/JPEG pixels, including edited positions, dimensions and rotations. This is bounded visual evidence. The legacy D0PL001Z bundle still raises a SAF-related warning. Jw_cad and VoiCeFREE display empty ATRU outlines in the owned image case. |
 | Real-file bundle | On Linux and native Windows, 19 of 20 local drawings delivered successfully, including 6 with actual SAF/image dependencies. All bundle file hashes match between platforms; 7 image dependencies were independently compared byte-for-byte with their sources. D4GV001Z was rejected because D4GV0011.TIF is missing from its SFC directory; no output directory was published for that case. |
 | Native Windows MSVC build and saving | GitHub Windows Server 2025 build 26100, native `x86_64-pc-windows-msvc`, CPython 3.13.15: 52 Rust tests, 44 Python tests passed (3 skipped), all 8 platform save checks. Native build, strict clippy, fmt, package, installed-wheel import/CLI and SAF/image authoring checks passed. The earlier Windows 11/cloud run remains separate cross-compiled/corpus evidence. |
 | Real SAF/image editing | Linux: all 6 available real SAF bundles load, normalize and save; only explicit SAF filename spellings change in the SFC model. Moving/resizing/rotating all 7 image placements and reloading preserves their edited geometry and attributes, while retaining the original image bytes. Missing D4GV0011.TIF is rejected. This is data/API evidence, not a third-party raster display pass. |
@@ -25,6 +25,76 @@ importing; equality of its imported model does not prove preservation of SXF
 editable structure or OCF conformance. Japanese text values and layer names
 passed the new Wine data checks. Some Wine menu/error captions still render as
 boxes; this run does not qualify native Windows CAD display.
+
+## Display qualification on 2026-10-06
+
+`scripts/prepare_sfc_display.py` creates owned inputs and a separate
+`expectations.json`: five text rows, a circle with Japanese SAF properties, a
+Group 4 TIFF with an L and checkerboard, and a JPEG with red/green above
+blue/yellow. A second bundle moves, resizes and rotates the images by +15 and
+-15 degrees. Pillow is needed only for preparing these verification inputs.
+Each SFC passes strict parsing and model serialization/reparse before review.
+Input hashes remain unchanged after the viewer runs.
+
+| Application and environment | Observed result |
+| --- | --- |
+| DynaCAD Viewer 9.0, Wine 9.0, task-owned Japanese prefix with IPA/Noto font substitutes | The SAF inspector displays group `設計`, `材料 = 鉄 & 鋼`, and Japanese/special-character notes. Both ATRU images show their actual patterns and orientation. Edited placements preserve patterns, dimensions and opposite rotations. The black CAD background displays TIFF foreground ink in white. Five text rows, including CP932 characters `ソ 予 表 申 能`, display correctly. A semantic single SFC backslash displays as two yen signs; the SAF note displays one yen sign. Some menu captions remain boxes, so this is not qualification of the whole localized UI or native Windows. |
+| VoiCeFREE 3.5.5.3, same Wine prefix | Five Japanese/ASCII rows display, including the CP932 characters above. SFC backslashes display as doubled yen signs. ATRU images show empty outline rectangles; neither image's expected pattern is present. SAF inspector behavior is not qualified. |
+| Jw_cad 8.25a, native Windows Server 2025 build 26100, external `ja-JP` manifest experiment | Japanese glyphs and all five corrected text rows display. Basic/quoted Save As, replacement and reopen retain equal strict SFC models and independent JWW geometry/styles; the quoted canvas is unchanged pixel-for-pixel. Backslashes remain doubled, with backslash or yen glyphs depending on the font. The five-row save workflow times out, so it is not a five-row save/reopen pass. |
+| Jw_cad 10.03.6, same native Windows manifest experiment | All five corrected rows import, but Japanese displays as mojibake. Save/reopen changes Japanese contents, font names and widths: 9 resolved JWW differences in the five-row case. The combined Japanese/backslash/apostrophe output also fails strict SFC parsing. Basic/quoted snapshots have 3 differences each. Raster patterns are absent and SAF/image exports fail. These are compatibility failures even though the workflow's minimum basic-operation gate passes. |
+
+The initial text card created duplicate font definitions. DynaCAD reported
+`TEXT_FONT 20024` and `TEXT 30007`, and Jw_cad imported only one of five rows.
+`SfcDocument.add_font()` now returns an existing code for an exact-name match,
+including the default Japanese font; it appends only new names. It preserves
+existing codes and leaves imported documents unchanged on a reused name.
+The Rust regression covers repeat calls without mutation and subsequent new
+font allocation. Corrected files contain two font definitions and all five rows
+display in the three readable application/environment combinations above.
+
+The SFC specification, appendix SFC second edition, section 1-1-3(3), printed
+page 3 / PDF page 9, requires double-backslash spelling inside strings and
+explains font-dependent backslash/yen glyphs. The writer keeps that spelling.
+The repeated glyphs above are recorded as a display limitation; no alternate
+escaping or silent text transformation is introduced to accommodate a viewer.
+
+The native CAD evidence is in
+[the corrected-font run](https://github.com/monozukuri-ai/ezsxf/actions/runs/37404988926)
+at `2f1eb914732de81ebe4b5cfea84dcc99a89c1918`. Independent Linux review
+verified 30 output hashes for 10.03.6 and 23 for 8.25a. Invalid SFC outputs are
+retained as failures; leniently recovered models cannot qualify equality.
+[Earlier manifest/card evidence](https://github.com/monozukuri-ai/ezsxf/actions/runs/37401844326)
+at `61faa6d` retains the duplicate-font failure. The 8.25a corrected-font job
+needed one retry after official-installer connection timeouts.
+
+The operating system remains en-US/ACP 1252. The experiment adds an external
+manifest to the private runtime, keeps the vendor executable hash unchanged,
+and restores the ephemeral runner's `PreferExternalManifest` registry value.
+A separate x86 probe reports ACP 932; it does not measure the CAD's own ACP.
+The actual CAD observations above determine acceptance. The workflow is manual
+and defaults to the unchanged system locale; `ja-JP` is an explicit experiment,
+not a generally qualified fix for Japanese Windows behavior.
+
+[Core CI](https://github.com/monozukuri-ai/ezsxf/actions/runs/37404958691) at
+`2f1eb91` passed Linux and native MSVC checks: 53 Rust tests, 44 Python tests
+on Windows with 3 skipped, fmt, strict clippy, wheel/import/CLI and the platform
+save checks. Locally, all 47 Python tests passed after rebuilding the extension.
+The newer font fix does not change the earlier filesystem/corpus evidence.
+
+DynaCAD was supplied by the user and both viewer licenses were accepted by the
+user before their installers' agreement actions. VoiCeFREE needed MFC42 from
+the official Microsoft VC6 redistributable; its download hash matched the local
+Winetricks pin. Autodesk's official viewer ZIP returned HTTP 403 on both Linux
+and a native Windows runner. No registration data was submitted by automation.
+Vendor installers, dependencies, license text, supplied drawings, screenshots,
+UI actions and independent results stay private under
+`.local/internal/display-review-20261006/`. They are excluded from distributions.
+
+Remaining display coverage includes legacy D0PL001Z SAF/TIFF ingestion (both
+the original and the normalized edited bundle showed a SAF-related warning;
+the original also warned with an absolute filename on a short C-drive path), larger
+real-file coverage, custom SAF schemas/types, native Windows DynaCAD display,
+and a reliable CAD save/reopen result for the five-row character case.
 
 ## Recorded Wine CAD run
 
