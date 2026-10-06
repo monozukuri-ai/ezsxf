@@ -1,0 +1,46 @@
+name: Windows CAD qualification
+
+on:
+  push:
+    branches: [codex/sfc-saf-windows-qualification]
+    paths:
+      - .github/workflows/cad-windows.yml
+      - scripts/verify_sfc_cad_windows.ps1
+      - scripts/prepare_sfc_cad.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jwcad:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['10.03.6', '8.25a']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Build and install the native extension
+        run: |
+          python -m pip install maturin
+          maturin build --out dist
+          python -c "import pathlib,subprocess,sys; subprocess.check_call([sys.executable,'-m','pip','install',str(next(pathlib.Path('dist').glob('*.whl')))])"
+      - name: Prepare CAD review files
+        run: |
+          python scripts/verify_sfc_platform.py --output platform-verification
+          python scripts/prepare_sfc_cad.py platform-verification
+      - name: Qualify dedicated CAD process
+        shell: pwsh
+        run: ./scripts/verify_sfc_cad_windows.ps1 -Version '${{ matrix.version }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-cad-${{ matrix.version }}
+          path: cad-verification
+          if-no-files-found: error

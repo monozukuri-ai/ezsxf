@@ -12,3 +12,7 @@ dist/
 build/
 *.egg-info/
 src/ezsxf/_core.abi3.so
+.local/
+.venv-windows/
+windows-verification/
+platform-verification/

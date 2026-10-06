@@ -2,14 +2,26 @@
 
 //! Rust core for the `ezsxf` Python extension.
 
+mod attributes;
+mod bundle;
 mod document;
+mod editor;
 mod features;
+mod image;
 mod model;
 mod parser;
 mod python;
+mod python_editor;
+mod python_writer;
+mod saf;
+mod writer;
 
+pub use bundle::{write_sfc_bundle, SfcBundleReport};
+pub use editor::SfcDocument;
 pub use model::*;
 pub use parser::{parse_p21_text, parse_sfc_text};
+pub use saf::{SafAttribute, SafDocument, SafFigure, SafSet};
+pub use writer::{serialize_sfc, write_sfc, SfcWriteOptions, WriteError};
 
 use pyo3::prelude::*;
 

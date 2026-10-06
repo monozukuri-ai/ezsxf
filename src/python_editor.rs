@@ -1,0 +1,468 @@
+//! Thin Python boundary for the Rust SFC editor.
+
+use crate::editor::{number, string, SfcDocument};
+use crate::model::{FileFormat, Value};
+use crate::writer::{write_bytes_atomic, SfcWriteOptions, WriteError};
+use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::prelude::*;
+use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
+use std::collections::BTreeMap;
+
+fn error(error: WriteError) -> PyErr {
+    PyValueError::new_err(error.to_string())
+}
+fn style(layer: i64, color: i64, line_type: i64, line_width: i64) -> Vec<Value> {
+    vec![
+        string(layer),
+        string(color),
+        string(line_type),
+        string(line_width),
+    ]
+}
+fn scalar(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+    if value.is_instance_of::<PyBool>() {
+        return Err(PyTypeError::new_err("Boolean is not an editing parameter"));
+    }
+    if value.is_instance_of::<PyInt>() {
+        Ok(Value::Integer(value.extract()?))
+    } else if value.is_instance_of::<PyFloat>() {
+        Ok(Value::Real(value.extract()?))
+    } else if value.is_instance_of::<PyString>() {
+        Ok(Value::String(value.extract()?))
+    } else {
+        Err(PyTypeError::new_err("Expected an integer, float or string"))
+    }
+}
+fn points(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+    if !value.is_instance_of::<PyList>() && !value.is_instance_of::<PyTuple>() {
+        return Err(PyTypeError::new_err("points must be a list or tuple"));
+    }
+    value
+        .iter()?
+        .map(|point| {
+            let point = point?;
+            if !point.is_instance_of::<PyList>() && !point.is_instance_of::<PyTuple>() {
+                return Err(PyTypeError::new_err("Each point must be a list or tuple"));
+            }
+            point
+                .iter()?
+                .map(|v| scalar(&v?))
+                .collect::<PyResult<Vec<_>>>()
+                .map(Value::List)
+        })
+        .collect::<PyResult<Vec<_>>>()
+        .map(Value::List)
+}
+
+#[pyclass(name = "SfcDocument", module = "ezsxf._core")]
+struct PythonSfcDocument {
+    document: SfcDocument,
+}
+
+#[pymethods]
+#[allow(clippy::too_many_arguments)]
+impl PythonSfcDocument {
+    fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        crate::python::output_to_python(py, self.document.snapshot())
+    }
+    #[pyo3(signature = (*, allow_external_references=false))]
+    fn to_bytes(&self, py: Python<'_>, allow_external_references: bool) -> PyResult<Py<PyBytes>> {
+        let bytes = self
+            .document
+            .to_bytes(SfcWriteOptions {
+                allow_external_references,
+            })
+            .map_err(error)?;
+        Ok(PyBytes::new_bound(py, &bytes).unbind())
+    }
+    #[pyo3(signature = (path, *, allow_external_references=false))]
+    fn save(&self, path: &Bound<'_, PyAny>, allow_external_references: bool) -> PyResult<()> {
+        let bytes = self
+            .document
+            .to_bytes(SfcWriteOptions {
+                allow_external_references,
+            })
+            .map_err(error)?;
+        write_bytes_atomic(&crate::python_writer::fspath(path)?, &bytes).map_err(Into::into)
+    }
+    #[pyo3(signature = (name, *, visible=true))]
+    fn add_layer(&mut self, name: &str, visible: bool) -> PyResult<i64> {
+        self.document.add_layer(name, visible).map_err(error)
+    }
+    fn rename_layer(&mut self, code: i64, name: &str) -> PyResult<()> {
+        self.document.rename_layer(code, name).map_err(error)
+    }
+    fn add_font(&mut self, name: &str) -> PyResult<i64> {
+        self.document.add_font(name).map_err(error)
+    }
+    #[pyo3(signature = (destination, *, file_name=None))]
+    fn save_bundle<'py>(
+        &self,
+        py: Python<'py>,
+        destination: &Bound<'_, PyAny>,
+        file_name: Option<&str>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let report = self
+            .document
+            .save_bundle(&crate::python_writer::fspath(destination)?, file_name)?;
+        let result = PyDict::new_bound(py);
+        result.set_item("drawing", report.drawing)?;
+        result.set_item("files", report.files)?;
+        Ok(result)
+    }
+    fn saf_bytes(&self, py: Python<'_>) -> PyResult<Option<Py<PyBytes>>> {
+        Ok(self
+            .document
+            .saf_bytes()
+            .map_err(error)?
+            .map(|b| PyBytes::new_bound(py, &b).unbind()))
+    }
+    #[pyo3(signature = (entity_id, name, value, *, attribute_type="STR", unit=None, group=None, set_name="ezsxf attributes", set_version="1.0", designed_by="ezsxf", figure_name="figure"))]
+    fn set_attribute(
+        &mut self,
+        entity_id: i64,
+        name: &str,
+        value: &str,
+        attribute_type: &str,
+        unit: Option<String>,
+        group: Option<Vec<String>>,
+        set_name: &str,
+        set_version: &str,
+        designed_by: &str,
+        figure_name: &str,
+    ) -> PyResult<String> {
+        self.document
+            .set_attribute(
+                entity_id,
+                figure_name,
+                (set_name, set_version, designed_by),
+                crate::saf::SafAttribute {
+                    name: name.into(),
+                    value: value.into(),
+                    attribute_type: Some(attribute_type.into()),
+                    unit,
+                    group: group.unwrap_or_default(),
+                },
+            )
+            .map_err(error)
+    }
+    fn get_attributes<'py>(&self, py: Python<'py>, entity_id: i64) -> PyResult<Bound<'py, PyList>> {
+        let result = PyList::empty_bound(py);
+        for (set, a) in self.document.attributes(entity_id).map_err(error)? {
+            let row = PyDict::new_bound(py);
+            row.set_item("set_name", set.name)?;
+            row.set_item("set_version", set.version)?;
+            row.set_item("designed_by", set.designed_by)?;
+            row.set_item("name", a.name)?;
+            row.set_item("value", a.value)?;
+            row.set_item("attribute_type", a.attribute_type)?;
+            row.set_item("unit", a.unit)?;
+            row.set_item("group", a.group)?;
+            result.append(row)?;
+        }
+        Ok(result)
+    }
+    #[pyo3(signature = (entity_id, name, *, group=None, set_name="ezsxf attributes", set_version="1.0", designed_by="ezsxf"))]
+    fn remove_attribute(
+        &mut self,
+        entity_id: i64,
+        name: &str,
+        group: Option<Vec<String>>,
+        set_name: &str,
+        set_version: &str,
+        designed_by: &str,
+    ) -> PyResult<()> {
+        self.document
+            .remove_attribute(
+                entity_id,
+                (set_name, set_version, designed_by),
+                name,
+                &group.unwrap_or_default(),
+            )
+            .map_err(error)
+    }
+    fn remove_attachment(&mut self, entity_id: i64) -> PyResult<()> {
+        self.document.remove_attachment(entity_id).map_err(error)
+    }
+    #[pyo3(signature = (entity_id, figure_name, name, value, *, attribute_type="STR", unit=None))]
+    fn set_single_attribute(
+        &mut self,
+        entity_id: i64,
+        figure_name: &str,
+        name: &str,
+        value: &str,
+        attribute_type: &str,
+        unit: Option<String>,
+    ) -> PyResult<String> {
+        self.document
+            .set_single_attribute(
+                entity_id,
+                figure_name,
+                crate::saf::SafAttribute {
+                    name: name.into(),
+                    value: value.into(),
+                    attribute_type: Some(attribute_type.into()),
+                    unit,
+                    group: vec![],
+                },
+            )
+            .map_err(error)
+    }
+    #[pyo3(signature = (entity_id, name, *, attribute_type=None, unit=None))]
+    fn set_text_attribute(
+        &mut self,
+        entity_id: i64,
+        name: &str,
+        attribute_type: Option<&str>,
+        unit: Option<&str>,
+    ) -> PyResult<String> {
+        self.document
+            .set_text_attribute(entity_id, name, attribute_type, unit)
+            .map_err(error)
+    }
+    #[pyo3(signature = (source, *, file_name=None))]
+    fn add_dependency(
+        &mut self,
+        source: &Bound<'_, PyAny>,
+        file_name: Option<&str>,
+    ) -> PyResult<String> {
+        self.document
+            .add_dependency(&crate::python_writer::fspath(source)?, file_name)
+            .map_err(error)
+    }
+    #[pyo3(signature = (image, anchor, width_mm, height_mm, *, angle=0.0, layer=1, file_name=None))]
+    fn add_image(
+        &mut self,
+        image: &Bound<'_, PyAny>,
+        anchor: (f64, f64),
+        width_mm: f64,
+        height_mm: f64,
+        angle: f64,
+        layer: i64,
+        file_name: Option<&str>,
+    ) -> PyResult<i64> {
+        self.document
+            .add_image(
+                &crate::python_writer::fspath(image)?,
+                file_name,
+                anchor,
+                width_mm,
+                height_mm,
+                angle,
+                layer,
+            )
+            .map_err(error)
+    }
+    #[pyo3(signature = (entity_id, anchor, width_mm, height_mm, *, angle=0.0, image=None, file_name=None))]
+    fn update_image(
+        &mut self,
+        entity_id: i64,
+        anchor: (f64, f64),
+        width_mm: f64,
+        height_mm: f64,
+        angle: f64,
+        image: Option<&Bound<'_, PyAny>>,
+        file_name: Option<&str>,
+    ) -> PyResult<()> {
+        let path = image.map(crate::python_writer::fspath).transpose()?;
+        self.document
+            .update_image(
+                entity_id,
+                path.as_deref(),
+                file_name,
+                anchor,
+                width_mm,
+                height_mm,
+                angle,
+            )
+            .map_err(error)
+    }
+    #[pyo3(signature = (start, end, *, layer=1, color=1, line_type=1, line_width=1))]
+    fn add_line(
+        &mut self,
+        start: (f64, f64),
+        end: (f64, f64),
+        layer: i64,
+        color: i64,
+        line_type: i64,
+        line_width: i64,
+    ) -> PyResult<i64> {
+        let mut p = style(layer, color, line_type, line_width);
+        p.extend([
+            number(start.0),
+            number(start.1),
+            number(end.0),
+            number(end.1),
+        ]);
+        self.document.add_element("line_feature", p).map_err(error)
+    }
+    #[pyo3(signature = (center, radius, *, layer=1, color=1, line_type=1, line_width=1))]
+    fn add_circle(
+        &mut self,
+        center: (f64, f64),
+        radius: f64,
+        layer: i64,
+        color: i64,
+        line_type: i64,
+        line_width: i64,
+    ) -> PyResult<i64> {
+        let mut p = style(layer, color, line_type, line_width);
+        p.extend([number(center.0), number(center.1), number(radius)]);
+        self.document
+            .add_element("circle_feature", p)
+            .map_err(error)
+    }
+    #[pyo3(signature = (center, radius, start_angle, end_angle, *, direction=0, layer=1, color=1, line_type=1, line_width=1))]
+    fn add_arc(
+        &mut self,
+        center: (f64, f64),
+        radius: f64,
+        start_angle: f64,
+        end_angle: f64,
+        direction: i64,
+        layer: i64,
+        color: i64,
+        line_type: i64,
+        line_width: i64,
+    ) -> PyResult<i64> {
+        let mut p = style(layer, color, line_type, line_width);
+        p.extend([
+            number(center.0),
+            number(center.1),
+            number(radius),
+            string(direction),
+            number(start_angle),
+            number(end_angle),
+        ]);
+        self.document.add_element("arc_feature", p).map_err(error)
+    }
+    #[pyo3(signature = (points, *, layer=1, color=1, line_type=1, line_width=1))]
+    fn add_polyline(
+        &mut self,
+        points: Vec<(f64, f64)>,
+        layer: i64,
+        color: i64,
+        line_type: i64,
+        line_width: i64,
+    ) -> PyResult<i64> {
+        self.document
+            .add_polyline([layer, color, line_type, line_width], &points)
+            .map_err(error)
+    }
+    #[pyo3(signature = (text, anchor, *, height=3.5, width=3.5, spacing=0.0, angle=0.0, slant=0.0, base_point=1, direction=1, layer=1, color=1, font=1))]
+    fn add_text(
+        &mut self,
+        text: &str,
+        anchor: (f64, f64),
+        height: f64,
+        width: f64,
+        spacing: f64,
+        angle: f64,
+        slant: f64,
+        base_point: i64,
+        direction: i64,
+        layer: i64,
+        color: i64,
+        font: i64,
+    ) -> PyResult<i64> {
+        self.document
+            .add_element(
+                "text_string_feature",
+                vec![
+                    string(layer),
+                    string(color),
+                    string(font),
+                    string(text),
+                    number(anchor.0),
+                    number(anchor.1),
+                    number(height),
+                    number(width),
+                    number(spacing),
+                    number(angle),
+                    number(slant),
+                    string(base_point),
+                    string(direction),
+                ],
+            )
+            .map_err(error)
+    }
+    #[pyo3(signature = (entity_id, **changes))]
+    fn update_element(
+        &mut self,
+        entity_id: i64,
+        changes: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        let mut values = BTreeMap::new();
+        if let Some(changes) = changes {
+            for (key, value) in changes {
+                let key = key.extract::<String>()?;
+                let value = if key == "points" {
+                    points(&value)?
+                } else {
+                    scalar(&value)?
+                };
+                values.insert(key, value);
+            }
+        }
+        self.document
+            .update_element(entity_id, &values)
+            .map_err(error)
+    }
+    fn remove_element(&mut self, entity_id: i64) -> PyResult<()> {
+        self.document.remove_element(entity_id).map_err(error)
+    }
+}
+
+#[pyfunction]
+#[pyo3(signature = (file_name="drawing.sfc", *, name="drawing", width_mm=297, height_mm=210, timestamp=None))]
+fn new_sfc(
+    py: Python<'_>,
+    file_name: &str,
+    name: &str,
+    width_mm: i64,
+    height_mm: i64,
+    timestamp: Option<String>,
+) -> PyResult<PythonSfcDocument> {
+    let timestamp = match timestamp {
+        Some(s) => s,
+        None => py
+            .import_bound("datetime")?
+            .getattr("datetime")?
+            .call_method0("now")?
+            .call_method0("isoformat")?
+            .extract()?,
+    };
+    Ok(PythonSfcDocument {
+        document: SfcDocument::new(file_name, name, width_mm, height_mm, &timestamp)
+            .map_err(error)?,
+    })
+}
+#[pyfunction]
+fn edit_sfc(parsed: &Bound<'_, PyDict>) -> PyResult<PythonSfcDocument> {
+    let bytes = crate::python_writer::encode_python(parsed, true)?;
+    let output = crate::parser::parse_from_bytes(FileFormat::Sfc, &bytes, true)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(PythonSfcDocument {
+        document: SfcDocument::from_output(output).map_err(error)?,
+    })
+}
+#[pyfunction]
+fn edit_sfc_bundle(source: &Bound<'_, PyAny>) -> PyResult<PythonSfcDocument> {
+    Ok(PythonSfcDocument {
+        document: SfcDocument::from_bundle(&crate::python_writer::fspath(source)?)
+            .map_err(error)?,
+    })
+}
+#[pyfunction]
+fn validate_saf(data: &[u8]) -> PyResult<()> {
+    crate::saf::SafDocument::parse(data).map_err(error)?;
+    Ok(())
+}
+pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<PythonSfcDocument>()?;
+    module.add_function(wrap_pyfunction!(new_sfc, module)?)?;
+    module.add_function(wrap_pyfunction!(edit_sfc, module)?)?;
+    module.add_function(wrap_pyfunction!(edit_sfc_bundle, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_saf, module)?)?;
+    Ok(())
+}
