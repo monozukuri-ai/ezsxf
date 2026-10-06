@@ -147,7 +147,8 @@ def main() -> None:
         "--output", type=Path, required=True, help="new evidence directory"
     )
     args = parser.parse_args()
-    print(json.dumps(verify(args.output), ensure_ascii=False))
+    # Console encodings on native Windows can be CP1252 even when files are UTF-8.
+    print(json.dumps(verify(args.output), ensure_ascii=True))
 
 
 if __name__ == "__main__":
