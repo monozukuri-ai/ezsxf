@@ -111,8 +111,8 @@ display.
 
 ### Native Windows CAD scope
 
-The native CAD check is recorded in
-[GitHub Actions](https://github.com/monozukuri-ai/ezsxf/actions/runs/37399497412)
+The successful Jw_cad 10.03.6 native CAD job is recorded in
+[GitHub Actions](https://github.com/monozukuri-ai/ezsxf/actions/runs/37399497412/job/112063262244)
 at commit `98bcbcbc25f7d8ab2a7f1e2a0dcfec9a71b7be30`, with private independent
 analysis under `.local/internal/stage123-native-final/`.
 Dedicated PowerShell/Win32 UI automation on an ephemeral Windows runner opened
@@ -135,6 +135,15 @@ SFC gives drawing-group placements nonzero positions and prefixes attribute
 figure names. Strict reading rejects it; independent JWW comparisons find
 changes in names, styles and structures. Saving successfully is not accepted as
 compound or attribute preservation.
+
+In the same native Windows workflow, the 8.25a comparison job failed: all four
+cases wrote and replaced SFCs, but the final JWW snapshot command opened an
+error dialog naming `????.jww` and never completed. Its operation result stays
+failed. Independent review verified all 20 retained file hashes. Basic/quoted
+first-save and replacement SFC models agree strictly; compound outputs contain
+invalid CP932 sequences and drawing-group transforms, while attribute outputs
+change between saves. This comparison does not qualify the older CAD, and the
+overall CAD workflow remains failed despite the successful 10.03.6 job.
 
 The runner uses en-US and ANSI code page 1252. Screenshots show Japanese
 mojibake, and the readable Arial case displays two backslashes for a semantic
