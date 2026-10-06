@@ -547,3 +547,119 @@ and accepts an optional `-SaveSearchDirectory` for that known CAD directory.
 Only the uniquely named file created in the current run is deliberately
 overwritten. Unknown save destinations cause the operation gate to fail;
 an unobserved file is not treated as a successful save.
+
+## Group and bundle re-export follow-up on 2026-10-06
+
+These later runs use the native Windows 11 desktop with system/user cultures
+`ja-JP` and ANSI 932, original hash-checked applications and no external
+manifest. The user's original `en-US` regional values are restored exactly
+after each run. Prepared inputs remain unchanged. Actual CAD operations,
+strict SFC results and independent resolved JWW comparisons are reported
+separately.
+
+Five minimal name/type controls contain a circle in an identity group named
+`G`, `001`, `設計` or `-000-G`, or a reusable part named `P`. Jw_cad 10.03.6
+imports them and writes baseline JWW files, but all five SFC exports fail with
+`30002: SFIG_LOCATE`. The basic ungrouped control completes. Changing the group
+name or kind does not resolve this failure in the tested cases. Archive SHA-256:
+`d188771066afb1594d4252087d9bb6e96a630fef215a66d5e1dada2d4bd85f31`.
+
+Jw_cad 8.25a completes Save As, close/reopen, same-name replacement and another
+close/reopen for all five controls and the basic input. Strict SFC parsing
+passes. Group names gain an index prefix on each export: `G` becomes `-000-G`
+and then `-000--000-G`. Independent baseline/final JWW comparisons differ only
+in block-definition and block-reference names; geometry, styles and placements
+agree. The initial-import baseline does not establish preservation of features
+already transformed during import. Archive SHA-256:
+`694ce2f31afed3bf695dbe5ece6c278eddb3728f33f6e40ccbd555c34576cf27`.
+
+The seven-case bundle run additionally exercises Japanese group names, a
+shared part placed twice (including a translated, rotated, scaled placement),
+an inner/outer group, owned SAF attributes, original TIFF/JPEG placements,
+edited image placements, and a combined group/SAF/image drawing. All seven
+plus the basic control complete the CAD save/overwrite/reopen operations in
+8.25a. Both saved SFC versions pass strict parsing, but none of the seven
+satisfies the complete source-to-export comparison:
+
+| Case | Structure/content result |
+| --- | --- |
+| Ordinary group | Child geometry, placement, styles and kind survive; name prefixes accumulate. |
+| Shared part | Both placements retain the same definition, kind 4, geometry, rotation and scale; names change. |
+| Nested groups | Both levels, their placement relationships and child geometry survive; both names change. |
+| SAF attributes | `$$ATRF$$` names gain a prefix and become ordinary group names. The exported model has no attribute attachments, so its original SAF binding and values are not preserved as attributes. |
+| TIFF/JPEG, original and edited | `$$ATRU$$` names gain a prefix and cease to be image attachments. Closed polylines become four ordinary lines per image. Frame geometry remains in JWW, but raster semantics and valid image references are lost. |
+| Combined bundle | The ordinary group survives with a changed name; all three SAF/image attachments are lost. |
+
+Source-to-first-export SFC comparison independently confirms group/part/nested
+geometry, hierarchy, styles and reuse, rather than relying only on JWW imported
+snapshots. All inputs also change sheet type from free-size 9 to A4 type 4,
+despite retaining the 297 by 210 dimensions. This is recorded as a metadata
+change. First-export-to-overwrite content is stable in these cases, but names
+change again; strict complete equality fails. Stability after the first export
+does not restore SAF/image semantics already lost in that export.
+
+The bundle run archive SHA-256 is
+`cd056cbf61f843f3cb7aa1ffef5d4c4566b841c02aa8bef15f8d87ca86bb926f`.
+Private archives, per-file hash checks, actual UI snapshots, SFC/JWW files,
+independent comparisons and regional restoration evidence stay under
+`.local/internal/native-complex-20261006/`. The CAD operation artifacts capture
+SFC/JWW files; companion-file output bytes are not qualified by that capture.
+Copying the original SAF/images beside an altered SFC cannot establish a
+successful CAD re-export. The earlier native DynaCAD **display** results remain
+valid within their separate scope.
+
+### Reusable re-export procedure and comparison boundary
+
+`scripts/prepare_sfc_reexport.py` creates these seven vendor-free inputs, their
+dependencies, expected snapshots and a ZIP. The output directory and ZIP must
+be new. `cases.json` records input file hashes and explicitly starts with
+`third_party_reexport_qualified: false`; no CAD runs during preparation. The
+reviewed input ZIP SHA-256 is
+`0444210ff0e117264ae1203939c34e1e300761174e968b14ed69d4e646d1d9e4`.
+
+1. In the CAD under review, open every case listed in `cases.json` with its
+   original SAF/images present. Record version, locale, import/export settings,
+   warnings, actual screenshots and input hashes.
+2. Export as SXF 3/3.1 into a new directory per case, retaining its SAF and
+   images. Close the CAD, reopen the exported SFC, and inspect grouping,
+   attribute values and actual raster pixels. Export again into another new
+   directory. Do not repair names or reattach source metadata before review.
+3. Run the read-only comparison for input/first export and first/second export:
+
+   ```bash
+   python scripts/verify_sfc_reexport.py INPUT.sfc EXPORTED.sfc --report new-report.json
+   ```
+
+The comparator uses Rust strict parsing and bundle/attachment validation.
+It supports lines, circles, arcs, polylines, text, placed ordinary groups/parts
+and their supported SAF/ATRU/ATRS attachments. It checks geometry, drawing
+order, nested placement/kind, shared definition counts, resolved styles, group
+names, SAF figure/set metadata, groups, types, units and values. `画像` and
+`ファイル名` dependencies are compared by exact bytes; raster comparisons
+support TIFF/JPEG. Entity/figure/set IDs, code-table indices and dependency
+basenames may change while retaining the same bindings and content. Header
+timestamps/application metadata and the sheet title are excluded; other sheet
+parameters remain checked. Numeric tolerance is absolute/relative 1e-9.
+
+Missing/ambiguous/symbolic dependencies, invalid SFC/SAF, untyped records,
+unplaced definitions/geometry, composite curves, hatches and other unsupported
+elements fail the comparison. Image recompression also fails byte comparison;
+it needs a separate decoded-pixel and visual review. Custom schemas, vendor
+references and converted primitive representations need independent review.
+Individual check results explain a failure, including retained content versus
+changed names; only the complete `passed` result qualifies this data gate.
+Data equality alone does not prove CAD execution, display or OCF conformance.
+
+The available DynaCAD Viewer and VoiCeFREE installations provide display
+evidence rather than SXF authoring/export. No usable full CAD license was
+available for a separate SAF/image-preserving re-export. Reviewed trials do
+not remove this gap: [BV CAD/RS 20 disables saving](https://www.bigvan.co.jp/form/bv_cad_rs_trial.html),
+and [Photron's current trials exclude SFC/P21 saving](https://www.photron.co.jp/service/cad/trialdl_cad/trial/).
+Positive qualification still needs a legally usable CAD with SFC input and
+SXF 3/3.1 SAF/raster export, followed by the actual procedure above.
+
+Local checks pass 61 Rust tests, all 58 Python tests, Rust formatting and strict
+all-target/all-feature clippy. The five new Python detector regressions cover
+lost grouping/reuse, ID renumbering, changed SAF values/dependency bytes,
+prefixed attachment names, changed/missing images and empty exports. They are
+synthetic detector checks, separate from the recorded native CAD operations.

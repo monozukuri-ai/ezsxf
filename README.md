@@ -253,6 +253,24 @@ editable. Failed operations keep both SFC and SAF state unchanged.
 See [writer validation and Windows procedure](docs/sfc-writer-validation.md) for
 the distinction between model tests, Wine CAD checks and native Windows saving.
 
+For group/SAF/image re-export review, prepare seven owned inputs (Pillow is
+required for preparing the image cards), then compare each input with its
+actual CAD export:
+
+```bash
+python scripts/prepare_sfc_reexport.py cad-reexport-inputs
+python scripts/verify_sfc_reexport.py cad-reexport-inputs/group.sfc cad-output/group.sfc --report group-review.json
+```
+
+The report must be a new file. The comparator exits with status 1 for lost or
+changed data and unsupported features. It checks bounded basic geometry,
+group hierarchy/reuse, SAF values/bindings and referenced file bytes. TIFF/JPEG
+recompression requires separate pixel/visual review. Per-check results help
+explain a failure; only `passed: true` satisfies the complete comparison gate.
+Record actual CAD operations and display separately: a successful comparison
+of local copies does not qualify a third-party CAD. See the
+[native re-export results](docs/sfc-writer-validation.md#group-and-bundle-re-export-follow-up-on-2026-10-06).
+
 ## Title-block (sheet) attribute names
 
 SXF represents title-block information in two related places. The
