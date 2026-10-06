@@ -31,7 +31,9 @@ jobs:
           maturin build --out dist
           python -c "import pathlib,subprocess,sys; subprocess.check_call([sys.executable,'-m','pip','install',str(next(pathlib.Path('dist').glob('*.whl')))])"
       - name: Prepare CAD review files
-        run: python scripts/verify_sfc_platform.py --output platform-verification
+        run: |
+          python scripts/verify_sfc_platform.py --output platform-verification
+          python -c "import ezsxf; d=ezsxf.edit_sfc_bundle('platform-verification/authored/属性画像.sfc'); d.save_bundle('platform-verification/cad-attributes',file_name='attributes.sfc')"
       - name: Qualify dedicated CAD process
         shell: pwsh
         run: ./scripts/verify_sfc_cad_windows.ps1 -Version '${{ matrix.version }}'
