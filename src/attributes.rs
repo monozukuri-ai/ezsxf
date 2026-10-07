@@ -507,8 +507,17 @@ impl SfcDocument {
         &self,
         destination: &Path,
         file_name: Option<&str>,
-        mut options: SfcWriteOptions,
+        options: SfcWriteOptions,
     ) -> std::io::Result<crate::bundle::SfcBundleReport> {
+        let (name, files) = self.prepare_sfc_files(file_name, options)?;
+        crate::bundle::publish_bundle(destination, &name, &files)
+    }
+
+    pub(crate) fn prepare_sfc_files(
+        &self,
+        file_name: Option<&str>,
+        mut options: SfcWriteOptions,
+    ) -> std::io::Result<(String, BTreeMap<String, Vec<u8>>)> {
         options.allow_external_references = true;
         self.validate_links()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?;
@@ -613,7 +622,7 @@ impl SfcDocument {
         if files.insert(name.into(), bytes).is_some() {
             return Err(invalid(error("Dependency collides with SFC")));
         }
-        crate::bundle::publish_bundle(destination, name, &files)
+        Ok((name.into(), files))
     }
 }
 

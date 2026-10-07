@@ -11,6 +11,13 @@ use std::collections::BTreeMap;
 fn error(error: WriteError) -> PyErr {
     PyValueError::new_err(error.to_string())
 }
+fn io_error(error: std::io::Error) -> PyErr {
+    if error.kind() == std::io::ErrorKind::InvalidInput {
+        PyValueError::new_err(error.to_string())
+    } else {
+        error.into()
+    }
+}
 fn style(layer: i64, color: i64, line_type: i64, line_width: i64) -> Vec<Value> {
     vec![
         string(layer),
@@ -130,6 +137,32 @@ impl PythonSfcDocument {
     fn save_p21(&self, path: &Bound<'_, PyAny>) -> PyResult<()> {
         let bytes = crate::p21_writer::serialize_p21(self.document.snapshot()).map_err(error)?;
         write_bytes_atomic(&crate::python_writer::fspath(path)?, &bytes).map_err(Into::into)
+    }
+    #[pyo3(signature = (destination, *, file_name=None))]
+    fn save_p21_bundle<'py>(
+        &self,
+        py: Python<'py>,
+        destination: &Bound<'_, PyAny>,
+        file_name: Option<&str>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let report = self
+            .document
+            .save_p21_bundle(&crate::python_writer::fspath(destination)?, file_name)
+            .map_err(io_error)?;
+        let result = PyDict::new_bound(py);
+        result.set_item("drawing", report.drawing)?;
+        result.set_item("files", report.files)?;
+        Ok(result)
+    }
+    #[pyo3(signature = (*, file_name=None))]
+    fn to_p2z_bytes(&self, py: Python<'_>, file_name: Option<&str>) -> PyResult<Py<PyBytes>> {
+        let bytes = self.document.to_p2z_bytes(file_name).map_err(io_error)?;
+        Ok(PyBytes::new_bound(py, &bytes).unbind())
+    }
+    fn save_p2z(&self, path: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.document
+            .save_p2z(&crate::python_writer::fspath(path)?)
+            .map_err(io_error)
     }
     fn extend(&mut self, elements: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
         let mut inputs = Vec::new();

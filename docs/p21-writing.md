@@ -29,6 +29,13 @@ The source dictionary and editable document remain unchanged.
 | A0..A4/FREE sheet, orientation and title | Drawing definition/revision, sheet usage, planar box and presentation size |
 | Line, circle, circular arc, polyline | AP202 geometry and annotation curve occurrences; clockwise and major arcs retain their sense |
 | Text | Text literal with complete extent, all nine base points, rotation, slant, spacing, horizontal/vertical path and external font identifier |
+| Ellipse and ellipse arc | Elliptic geometry and parameter trims, also usable in composite boundaries |
+| Linear, arc-length, angular, radius and diameter dimensions | Semantic callouts, dimension/projection curves, numbered terminators and structured dimension text; omission flags are retained |
+| Leader and balloon | Leader callout, curve/terminator, text and balloon circle |
+| Solid fill, user hatch, predefined hatch and pattern hatch | Composite outer/hole boundaries, boundary visibility, fill colour, repeat factors or external hatch/tile identifiers |
+| Drawing attributes | Drawing number/type/title/scale, contract/project, approval date and creator/owner organizations |
+| ATRF, ATRU and ATRS | Named subfigures retain figure IDs, types, units and values; external SAF is delivered by the bundle APIs |
+| TIFF/JPEG image | Standard image attribute on a clockwise placement rectangle; bytes and filename are preserved in the bundle/P2Z |
 | Layers and visibility | Presentation layer assignments/usages and invisibility |
 | Predefined/RGB colours, predefined/custom line types and widths | Presentation styles, draw/gap pattern pairs and millimetre measures |
 | Mathematical partial drawing (kind 1), group (kind 3), drawing part (kind 4) | Subfigure representations, shared symbol maps and explicit placements, including nested and unequal X/Y scale |
@@ -41,19 +48,65 @@ identifies AP202 output. Each file is strictly reparsed to compare the emitted
 graph and header before it is returned or saved. File saving uses the same
 atomic regular-file replacement and symlink rejection as SFC saving.
 
-Ellipses, ellipse arcs, splines, clothoids, point markers, dimensions, leaders,
-hatches/fills, composite boundaries, external files, SAF/inline attributes and
-images currently fail with an unsupported-feature/reference error. Geodetic
+Splines, clothoids and point markers currently fail with an unsupported-feature
+error. Predefined symbols retain their external identifiers and colour mode;
+their graphics depend on the receiving CAD's symbol library. Geodetic
 partial drawings (kind 2) also fail, because their exchanged local axes need a
 separate implementation. Zero-length lines cannot form valid AP202 directions
 and are rejected. No unsupported feature is dropped or approximated.
-P2Z packaging is not implemented.
+Composite fill boundaries must be connected, directed closed loops. Their exact
+curves are retained; sampling is used only to choose a representative fill point
+outside holes. Boundaries must also satisfy SXF's nonintersection rules;
+the writer does not perform a complete geometric topology certification.
 
 This is a bounded P21 writer, not an OCF certification or a guarantee of
 electronic-delivery compliance. CAD acceptance, applicable delivery rules,
 filenames, metadata and drawing conventions require their own verification.
 Local graph round trips and comparison with ezsxf drawing primitives are
 regression evidence. The separate native-CAD checks below cover specific inputs.
+
+## Delivering P21, SAF and images
+
+Standalone `to_p21_bytes`, `save_p21`, `serialize_p21` and `write_p21` reject SAF
+and file/image dependencies. Use the complete delivery APIs for those drawings:
+
+```python
+import ezsxf
+
+doc = ezsxf.new_sfc("drawing.sfc")
+circle = doc.add_circle((80, 50), 5)
+doc.set_attribute(circle, "材料", "鋼", group=["設計", "仕様"])
+doc.add_image("scan.tif", (10, 20), 40, 20, angle=30)
+report = doc.save_p21_bundle("delivery", file_name="drawing.p21")
+doc.save_p2z("drawing.p2z")
+data = doc.to_p2z_bytes(file_name="drawing.p21")
+
+# Load an existing SFC together with its SAF and referenced files.
+ezsxf.write_p21_bundle("original.sfc", "converted", file_name="result.p21")
+ezsxf.write_p2z("original.sfc", "result.p2z")
+```
+
+Bundle destinations must be new directories. Preparation validates SAF figure
+IDs, required dependencies, portable filenames and image metadata before
+publishing. Renaming updates P21 `FILE_NAME`, ATRF references and SAF `sxfFile`
+together. Attribute sets, grouped values and figure IDs remain intact.
+Image bytes are copied without conversion; existing SFC image constraints
+apply (single-page monochrome G4 TIFF or supported JPEG).
+
+P2Z is a deterministic, unencrypted ZIP using Deflate, with one `.p21` file and
+only its referenced SAF and TIFF/JPEG files at the archive root. `save_p2z` uses
+the archive basename for its contained drawing and SAF. `to_p2z_bytes` takes a
+P21 filename. Unreferenced registered dependencies are excluded. Arbitrary
+attachments, additional drawing files and external DTD dependencies are rejected
+for P2Z; use an uncompressed bundle for those. Existing archives are replaced
+atomically after validation; symlinks are rejected. P2Z parsing/extraction is not
+added to `parse_p21`; use a ZIP reader to access the contained P21/SAF/images.
+Packaging follows [OCF SXF implementation convention §26](https://ocf.or.jp/pdf/kiyaku201604a.pdf).
+
+```bash
+python -m ezsxf bundle-p21 original.sfc converted --file-name result.p21
+python -m ezsxf to-p2z original.sfc result.p2z
+```
 
 ## Recorded native Windows verification
 
@@ -80,9 +133,32 @@ These observations apply to the tested version and inputs. Other CAD versions,
 nonuniform/vertical text, custom-style rendering and native SFC re-export need
 separate qualification; no OCF/electronic-delivery certification is claimed.
 
+Additional native Windows checks on the same date covered the expanded writer.
+Jw_cad 8.25a retained the tested linear, angular, radius and diameter dimensions,
+leader and balloon through JWW save/reopen. Independent parsing matched their
+geometry, text and terminator symbols to the corresponding SFC input. Jw_cad
+omitted the arc-length dimension in both source formats; DynaCAD Viewer 9.0
+displayed all five P21 dimension types and both leaders. Projection-curve bases
+and terminator codes 5 (filled box) / 6 (filled arrow) follow the SXF Feature/SFC
+specifications and native import behavior.
+
+DynaCAD Viewer 9.0 also displayed the tested P21 solid fill and two-pattern
+hatch with interior holes. Windows .NET ZIP extraction preserved every P2Z
+member byte-for-byte, and the extracted P21 displayed the actual monochrome
+TIFF pattern and coloured JPEG pixels. The drawing viewports matched the paired
+SFC/P21 inputs pixel-for-pixel. The P21 SAF attribute inspector displayed the
+same figure ID, attribute-set metadata, Japanese group/material/remark values
+as the SFC control; their attribute-dialog RGB pixels matched. Input files,
+SAF and rasters retained their recorded hashes. This qualifies the tested container and
+extracted drawing; direct P2Z opening in that viewer is not qualified. Predefined
+hatch/tile rendering remains dependent on the receiver's external libraries.
+
 References: bundled SXF Ver.3.1 AP202 subset specification §3-1 (header),
 §3-2-2 (sheet), §§3-2-11–15 (basic curves), §3-2-17 (text),
-§§3-2-20–21 (subfigures). Text uses a rotated local baseline offset of
+§§3-2-20–21 (subfigures), §§3-2-23–29 (dimensions/leaders),
+§§3-2-30–34 (fills/boundaries), §3-2-1 (drawing attributes), the attribute
+mechanism appendix §2-4 and common attribute sets §3-4 (images).
+Text uses a rotated local baseline offset of
 `height / 2`, `-height / 2` or `-height` for lower, middle or upper SXF box
 anchors respectively; the reader reverses it. This mapping is verified against
 paired real SFC/P21 data and the native SXF common-library import in Jw_cad.

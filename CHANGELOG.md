@@ -7,6 +7,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 ### Added
+- AP202 output for five dimension kinds, leaders/balloons, composite boundaries,
+  four fill/hatch styles, ellipses and elliptic arcs, drawing title metadata and
+  ATRF/ATRU/ATRS attribute groups.
+- Complete P21/SAF/image delivery with `save_p21_bundle`/`write_p21_bundle`, and
+  deterministic Deflate P2Z output with `save_p2z`, `to_p2z_bytes` and `write_p2z`.
+  CLI commands `bundle-p21` and `to-p2z` validate dependencies before saving.
+- Rust source builds now require Rust 1.88 or later for the ZIP dependency.
+
 - Atomic `SfcDocument.extend` for one-pass batch validation and `create_part`
   for shared definitions with only explicit placements.
 - Standard A0..A4/FREE paper codes and orientations, with integral-float paper

@@ -24,7 +24,7 @@ manifest alone did not establish correct Japanese save/reopen behavior.
 
 ## Recorded CAD observations
 
-These are bounded observations from the 2026-10-06 qualification inputs, not
+These are bounded observations from the 2026-10-06 and 2026-10-07 qualification inputs, not
 promises for arbitrary files or newer application releases. Viewer display
 does not establish authoring/export support.
 
@@ -34,7 +34,9 @@ does not establish authoring/export support.
 | Jw_cad 10.03.6, Wine with Japanese code page and font substitutes | The basic writer input displayed five primitive kinds, predefined/custom styles and Japanese text. Standard backslashes displayed doubled yen glyphs; the literal variant displayed one. This is visual import evidence for that input. |
 | Jw_cad 8.25a, native Japanese Windows profile | Tested group hierarchy, shared-part reuse, geometry and placement survived export, but group names and sheet metadata changed. SAF/image attachment names were rewritten, losing attribute and raster bindings. Complete source-to-export equality failed. |
 | Jw_cad 8.25a, 2026-10-07 native Windows, ja-JP system/ANSI 932 and en-US user culture | Twelve generated SFC/P21 inputs retained basic geometry, all nine horizontal text anchors, shared parts and 1/1–1/100 partial-drawing placements through JWW save/reopen. Six SFC/P21 pairs matched independently. Layer-group scale stayed 1; the partial-drawing ratios remained on blocks. This qualifies the listed imports/JWW storage, not native SFC re-export or OCF certification. |
+| Jw_cad 8.25a, expanded P21 writer on the same native Windows profile | The tested linear/angular/radius/diameter dimensions, leader and balloon matched SFC geometry, text and terminators through JWW save/reopen. Arc-length dimensions were omitted in both formats. |
 | DynaCAD Viewer 9.0, tested Japanese Windows/Wine profiles | Tested SAF values and actual TIFF/JPEG image patterns displayed, including edited placements. This qualifies viewing of those inputs, not CAD re-export. |
+| DynaCAD Viewer 9.0, expanded P21 writer on native Windows, 2026-10-07 | All five tested P21 dimensions/leaders and solid/two-pattern fills with holes displayed. SAF's Japanese grouped values matched the source SFC attribute dialog. P21/P2Z-extracted TIFF/JPEG viewports matched SFC pixels; native .NET extraction retained all member bytes. Direct P2Z opening is not qualified. |
 | VoiCeFREE 3.5.5.3, tested Japanese Wine profile | Japanese text displayed; the tested ATRU image cases showed empty frame outlines. SAF/raster-preserving re-export is not established. |
 
 The basic writer's native Windows build/filesystem saving is verified separately

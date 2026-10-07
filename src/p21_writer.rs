@@ -1,11 +1,16 @@
 //! SXF AP202 output from the validated, editable SFC model (AP202 subset §3).
-//! Supports basic curves/text, style tables, partial drawings, groups and shared
-//! parts. Every unsupported feature fails before any destination is replaced.
+//! Preserves AP202 dimensions, fills, subfigures and attribute group names.
+//! External dependencies are allowed only by the validated bundle writer.
 use crate::editor::{record, string};
 use crate::model::*;
 use crate::writer::{serialize_sfc, SfcWriteOptions, WriteError};
 use std::collections::BTreeMap;
 use std::fmt::Write;
+
+#[path = "p21_annotations.rs"]
+mod annotations;
+#[path = "p21_hatches.rs"]
+mod hatches;
 
 fn error(message: impl Into<String>) -> WriteError {
     WriteError(message.into())
@@ -34,6 +39,7 @@ struct Graph {
     entities: Vec<EntityInstance>,
     items: BTreeMap<i64, i64>,
     maps: BTreeMap<i64, i64>,
+    curves: BTreeMap<i64, i64>,
     colors: BTreeMap<i64, i64>,
     line_types: BTreeMap<i64, i64>,
     widths: BTreeMap<i64, i64>,
@@ -42,6 +48,7 @@ struct Graph {
     layer_items: BTreeMap<i64, Vec<i64>>,
     context: i64,
     length_unit: i64,
+    source: i64,
 }
 
 impl Graph {
@@ -223,6 +230,47 @@ impl Graph {
                     ],
                 )
             }
+            TypedFeature::Ellipse(ellipse) => {
+                let axis = self.axis(&ellipse.center, ellipse.rotation_angle_deg);
+                self.add(
+                    "ELLIPSE",
+                    vec![
+                        string(""),
+                        reference(axis),
+                        real(ellipse.radius_x),
+                        real(ellipse.radius_y),
+                    ],
+                )
+            }
+            TypedFeature::EllipseArc(arc) => {
+                let axis = self.axis(&arc.center, arc.rotation_angle_deg);
+                let ellipse = self.add(
+                    "ELLIPSE",
+                    vec![
+                        string(""),
+                        reference(axis),
+                        real(arc.radius_x),
+                        real(arc.radius_y),
+                    ],
+                );
+                self.add(
+                    "TRIMMED_CURVE",
+                    vec![
+                        string(""),
+                        reference(ellipse),
+                        Value::List(vec![measure(
+                            "PARAMETER_VALUE",
+                            arc.start_angle_deg.to_radians(),
+                        )]),
+                        Value::List(vec![measure(
+                            "PARAMETER_VALUE",
+                            arc.end_angle_deg.to_radians(),
+                        )]),
+                        enumeration(if arc.direction_flag == 0 { "T" } else { "F" }),
+                        enumeration("PARAMETER"),
+                    ],
+                )
+            }
             _ => return Err(error("Unsupported P21 curve")),
         })
     }
@@ -299,13 +347,50 @@ fn lookup(table: &BTreeMap<i64, i64>, code: i64, name: &str) -> Result<i64, Writ
 /// Generate a new AP202 graph; source SXF IDs/codes resolve content but are not
 /// reused as output graph IDs. No dimension/group flattening or rasterization.
 pub fn serialize_p21(output: &ParseOutput) -> Result<Vec<u8>, WriteError> {
-    serialize_sfc(output, SfcWriteOptions::default())?;
+    serialize_p21_with_dependencies(output, false, None)
+}
+
+pub(crate) fn serialize_p21_with_dependencies(
+    output: &ParseOutput,
+    allow_external_references: bool,
+    file_name: Option<&str>,
+) -> Result<Vec<u8>, WriteError> {
+    serialize_sfc(
+        output,
+        SfcWriteOptions {
+            allow_external_references,
+            ..SfcWriteOptions::default()
+        },
+    )?;
     let document = &output.document;
     let model = document
         .sfc_model
         .as_ref()
         .ok_or_else(|| error("P21 generation needs a resolved SFC model"))?;
+    if !allow_external_references && model.attribute_attachments.iter().any(|a| matches!(&a.mechanism, SfcAttributeMechanism::SingleAttribute { attribute_name: Some(name), .. } if matches!(name.as_str(), "画像" | "ファイル名"))) {
+        return Err(error("P21 has external dependencies; use save_p21_bundle or save_p2z"));
+    }
     for feature in &document.typed_features {
+        if let TypedFeature::DrawingAttribute(title) = &feature.feature {
+            let year = title.drawing_year;
+            let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+            let days = match title.drawing_month {
+                2 => {
+                    if leap {
+                        29
+                    } else {
+                        28
+                    }
+                }
+                4 | 6 | 9 | 11 => 30,
+                _ => 31,
+            };
+            if year <= 0 || title.drawing_day > days {
+                return Err(error(
+                    "P21 drawing title requires a valid Gregorian calendar date",
+                ));
+            }
+        }
         if !matches!(
             feature.feature,
             TypedFeature::DrawingSheet(_)
@@ -320,7 +405,23 @@ pub fn serialize_p21(output: &ParseOutput) -> Result<Vec<u8>, WriteError> {
                 | TypedFeature::Circle(_)
                 | TypedFeature::Arc(_)
                 | TypedFeature::Polyline(_)
+                | TypedFeature::Ellipse(_)
+                | TypedFeature::EllipseArc(_)
                 | TypedFeature::Text(_)
+                | TypedFeature::LinearDim(_)
+                | TypedFeature::CurveDim(_)
+                | TypedFeature::AngularDim(_)
+                | TypedFeature::RadiusDim(_)
+                | TypedFeature::DiameterDim(_)
+                | TypedFeature::Label(_)
+                | TypedFeature::Balloon(_)
+                | TypedFeature::CompositeCurve(_)
+                | TypedFeature::ExternallyDefinedHatch(_)
+                | TypedFeature::FillAreaStyleColour(_)
+                | TypedFeature::FillAreaStyleHatching(_)
+                | TypedFeature::FillAreaStyleTiles(_)
+                | TypedFeature::DrawingAttribute(_)
+                | TypedFeature::ExternallyDefinedSymbol(_)
                 | TypedFeature::SfigOrg(_)
                 | TypedFeature::SfigLocate(_)
         ) {
@@ -329,9 +430,6 @@ pub fn serialize_p21(output: &ParseOutput) -> Result<Vec<u8>, WriteError> {
                 feature.id, feature.keyword
             )));
         }
-    }
-    if !model.attribute_attachments.is_empty() {
-        return Err(error("P21 attribute attachments are not supported"));
     }
     let mut graph = Graph::default();
     let angle_unit = graph.complex(vec![
@@ -496,6 +594,7 @@ pub fn serialize_p21(output: &ParseOutput) -> Result<Vec<u8>, WriteError> {
             parameters: vec![string("SCADEC")],
         }],
     );
+    graph.source = source;
     for binding in &model.code_tables.text_fonts {
         let TypedFeature::TextFont(font) = by_id[&binding.entity_id] else {
             unreachable!()
@@ -515,22 +614,43 @@ pub fn serialize_p21(output: &ParseOutput) -> Result<Vec<u8>, WriteError> {
     let definitions: BTreeMap<_, _> = model
         .sfig_definitions
         .iter()
-        .map(|d| (d.entity_id, d))
+        .map(|d| (d.entity_id, d.clone()))
+        .chain(model.attribute_attachments.iter().map(|a| {
+            (
+                a.definition_id,
+                SfcSfigDefinition {
+                    entity_id: a.definition_id,
+                    name: a.name.clone(),
+                    kind_flag: a.kind_flag,
+                    component_ids: a.component_ids.clone(),
+                },
+            )
+        }))
         .collect();
     let targets: BTreeMap<_, _> = model
         .sfig_references
         .iter()
         .map(|r| (r.placement_id, r.definition_id))
+        .chain(
+            model
+                .attribute_attachments
+                .iter()
+                .flat_map(|a| a.placement_ids.iter().map(move |id| (*id, a.definition_id))),
+        )
         .collect();
     for feature in &document.typed_features {
+        let source_id = feature.id;
         let item = match &feature.feature {
             feature @ (TypedFeature::Line(_)
             | TypedFeature::Circle(_)
             | TypedFeature::Arc(_)
-            | TypedFeature::Polyline(_)) => {
+            | TypedFeature::Polyline(_)
+            | TypedFeature::Ellipse(_)
+            | TypedFeature::EllipseArc(_)) => {
                 let style = feature.style().unwrap();
                 let assignment = graph.curve_style(style)?;
                 let geometry = graph.curve(feature)?;
+                graph.curves.insert(source_id, geometry);
                 Some(graph.occurrence(
                     "ANNOTATION_CURVE_OCCURRENCE",
                     "",
@@ -540,8 +660,21 @@ pub fn serialize_p21(output: &ParseOutput) -> Result<Vec<u8>, WriteError> {
                 ))
             }
             TypedFeature::Text(text) => Some(graph.text(text)?),
+            feature @ (TypedFeature::LinearDim(_)
+            | TypedFeature::CurveDim(_)
+            | TypedFeature::AngularDim(_)
+            | TypedFeature::RadiusDim(_)
+            | TypedFeature::DiameterDim(_)
+            | TypedFeature::Label(_)
+            | TypedFeature::Balloon(_)) => Some(graph.dimension(feature)?),
+            TypedFeature::CompositeCurve(curve) => Some(graph.composite(feature.id, curve, model)?),
+            fill @ (TypedFeature::ExternallyDefinedHatch(_)
+            | TypedFeature::FillAreaStyleColour(_)
+            | TypedFeature::FillAreaStyleHatching(_)
+            | TypedFeature::FillAreaStyleTiles(_)) => Some(graph.fill(fill, model, &by_id)?),
+            TypedFeature::ExternallyDefinedSymbol(symbol) => Some(graph.external_symbol(symbol)?),
             TypedFeature::SfigOrg(_) => {
-                let definition = definitions[&feature.id];
+                let definition = &definitions[&feature.id];
                 let mut components = definition
                     .component_ids
                     .iter()
@@ -577,7 +710,7 @@ pub fn serialize_p21(output: &ParseOutput) -> Result<Vec<u8>, WriteError> {
             TypedFeature::SfigLocate(placement) => {
                 let definition_id = targets[&feature.id];
                 let map = lookup(&graph.maps, definition_id, "subfigure")?;
-                let definition = definitions[&definition_id];
+                let definition = &definitions[&definition_id];
                 // Geodetic partial drawings exchange X and Y local axes (Feature
                 // Specification §2-3); rejected until the reader shares that rule.
                 if definition.kind_flag == 2 {
@@ -633,19 +766,14 @@ pub fn serialize_p21(output: &ParseOutput) -> Result<Vec<u8>, WriteError> {
     let TypedFeature::DrawingSheet(sheet) = by_id[&sheet_model.entity_id] else {
         unreachable!()
     };
-    let definition = graph.add("DRAWING_DEFINITION", vec![string("01"), Value::Unset]);
-    let revision = graph.add(
-        "DRAUGHTING_DRAWING_REVISION",
-        vec![string("01"), reference(definition), Value::Unset],
-    );
-    graph.add(
-        "DRAUGHTING_TITLE",
-        vec![
-            references(&[revision]),
-            string("JAPANESE"),
-            string(&sheet.name),
-        ],
-    );
+    let title = document
+        .typed_features
+        .iter()
+        .find_map(|f| match &f.feature {
+            TypedFeature::DrawingAttribute(a) => Some(a),
+            _ => None,
+        });
+    let revision = graph.drawing_title(title, &sheet.name);
     let axis = graph.axis(&Point2 { x: 0.0, y: 0.0 }, 0.0);
     let (width, height) = crate::authoring::sheet_dimensions(
         sheet.sheet_type,
@@ -750,10 +878,12 @@ pub fn serialize_p21(output: &ParseOutput) -> Result<Vec<u8>, WriteError> {
             let filename = record.parameters[0]
                 .as_string()
                 .ok_or_else(|| error("Invalid FILE_NAME"))?;
-            let filename = std::path::Path::new(&filename)
-                .with_extension("p21")
-                .to_string_lossy()
-                .into_owned();
+            let filename = file_name.map(str::to_owned).unwrap_or_else(|| {
+                std::path::Path::new(&filename)
+                    .with_extension("p21")
+                    .to_string_lossy()
+                    .into_owned()
+            });
             record.parameters[0] = string(filename);
         }
     }
@@ -859,8 +989,67 @@ mod tests {
     fn unsupported_features_fail_explicitly() {
         let mut doc =
             crate::SfcDocument::new("drawing.sfc", "drawing", 297, 210, "2026-10-07").unwrap();
-        let id = doc.add_feature("ellipse", &BTreeMap::new()).unwrap();
+        let id = doc.add_feature("spline", &BTreeMap::new()).unwrap();
         let message = serialize_p21(doc.snapshot()).unwrap_err().to_string();
-        assert!(message.contains(&format!("#{id} ellipse_feature")));
+        assert!(message.contains(&format!("#{id} spline_feature")));
+    }
+    #[test]
+    fn attributes_are_resolved_as_groups_without_sfig_references() {
+        let mut doc =
+            crate::SfcDocument::new("drawing.sfc", "drawing", 297, 210, "2026-10-07").unwrap();
+        let id = doc
+            .add_element(
+                "text_string_feature",
+                vec![
+                    Value::Integer(1),
+                    Value::Integer(1),
+                    Value::Integer(1),
+                    string("title"),
+                    real(10.0),
+                    real(20.0),
+                    real(3.0),
+                    real(15.0),
+                    real(0.0),
+                    real(0.0),
+                    real(0.0),
+                    Value::Integer(1),
+                    Value::Integer(1),
+                ],
+            )
+            .unwrap();
+        doc.set_text_attribute(id, "title", Some("STR"), None)
+            .unwrap();
+        assert!(doc
+            .snapshot()
+            .document
+            .sfc_model
+            .as_ref()
+            .unwrap()
+            .sfig_references
+            .is_empty());
+        let bytes = serialize_p21(doc.snapshot()).unwrap();
+        assert!(String::from_utf8(bytes)
+            .unwrap()
+            .contains("$$SXF_G_$$ATRS$$"));
+    }
+    #[test]
+    fn dimensions_keep_callouts_and_omission_flags() {
+        let mut doc =
+            crate::SfcDocument::new("drawing.sfc", "drawing", 297, 210, "2026-10-07").unwrap();
+        doc.add_feature(
+            "linear_dimension",
+            &BTreeMap::from([
+                ("end_x".into(), real(20.0)),
+                ("text_present".into(), Value::Integer(0)),
+            ]),
+        )
+        .unwrap();
+        let bytes = serialize_p21(doc.snapshot()).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("LINEAR_DIMENSION()"));
+        assert!(text.contains("DIMENSION_CURVE()"));
+        assert!(!text.contains("PROJECTION_CURVE()"));
+        assert!(!text.contains("DIMENSION_CURVE_TERMINATOR("));
+        assert!(!text.contains("TEXT_LITERAL_WITH_EXTENT("));
     }
 }

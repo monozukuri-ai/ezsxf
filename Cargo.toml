@@ -2,6 +2,7 @@
 name = "ezsxf"
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.88"
 description = "Fast SXF parser, SFC writer and drawing converter for Python powered by Rust"
 license = "MIT"
 readme = "README.md"
@@ -42,6 +43,7 @@ include = [
     "/tests/test_sfc_reexport_verification.py",
     "/tests/test_sfc_styles.py",
     "/tests/test_writer_requests.py",
+    "/tests/test_p21_delivery.py",
     "/scripts/verify_writer_requests.py",
     "/scripts/verify_sfc_windows.ps1",
     "/scripts/verify_sfc_platform.py",
@@ -68,4 +70,6 @@ crate-type = ["cdylib"]
 encoding_rs = "0.8"
 libc = "0.2"
 roxmltree = "0.21"
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2"] }
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 pyo3 = { version = "0.22.4", features = ["extension-module", "abi3-py39"] }

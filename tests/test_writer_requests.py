@@ -256,8 +256,8 @@ class WriterRequestsTest(unittest.TestCase):
             doc.save(sfc)
             self.assertEqual(ezsxf.main(["to-p21", str(sfc), str(output)]), 0)
             self.assertEqual(output.read_bytes(), original)
-            doc.add_feature("ellipse")
-            with self.assertRaisesRegex(ValueError, "ellipse_feature"):
+            doc.add_feature("spline")
+            with self.assertRaisesRegex(ValueError, "spline_feature"):
                 doc.save_p21(output)
             self.assertEqual(output.read_bytes(), original)
 

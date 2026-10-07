@@ -5,7 +5,7 @@ and PyO3. Python 3.9 or later is supported.
 
 - Parse P21/SFC from a file path, text or bytes, with strict or lenient recovery.
 - Create, edit and save SFC geometry, text, styles, groups, dimensions and hatches.
-- Add elements in a single validated batch and export supported drawings to P21.
+- Add elements in a single validated batch and export P21/P2Z with dimensions, hatches, attributes and images.
 - Deliver drawings with SAF attributes and TIFF/JPEG dependencies.
 - Export DXF or plot drawings with the optional matplotlib backend.
 
@@ -65,7 +65,7 @@ Run `python -m ezsxf --help` or see the [CLI guide](docs/cli.md).
 | Format | Support |
 | --- | --- |
 | SFC | All 34 SXF Ver.3.1 feature types are parsed with resolved hierarchy, style codes and attribute attachments. Saving and supported editing APIs retain the SFC model. |
-| P21 | Generic Part 21 parsing and drawing conversion. AP202 output from SFC models supports lines, circles, arcs, polylines, text, styles, mathematical partial drawings, groups and shared parts. Unsupported features fail before saving; see [P21 writing](docs/p21-writing.md). |
+| P21/P2Z output | AP202 output from SFC models includes curves, text, dimensions/leaders, fills/hatches, styles, subfigures and attributes. P21 bundles and P2Z include validated SAF/images. Unsupported elements fail before saving; see [P21 writing](docs/p21-writing.md). |
 
 Model preservation and third-party CAD display/re-export have separate limits.
 See [compatibility](docs/compatibility.md) for Japanese text, backslashes,

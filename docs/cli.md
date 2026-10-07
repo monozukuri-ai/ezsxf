@@ -22,6 +22,10 @@ python -m ezsxf resave-sfc drawing.sfc copy.sfc --allow-external-references
 # export the supported SFC subset to AP202 P21
 python -m ezsxf to-p21 drawing.sfc drawing.p21
 
+# convert SFC with SAF/images to a new P21 bundle or P2Z archive
+python -m ezsxf bundle-p21 drawing.sfc delivery --file-name result.p21
+python -m ezsxf to-p2z drawing.sfc result.p2z
+
 # deliver SFC/SAF/images together into a new directory
 python -m ezsxf bundle-sfc drawing.sfc delivery --file-name renamed.sfc
 

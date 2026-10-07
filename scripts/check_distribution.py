@@ -50,6 +50,11 @@ def check(directory: Path, version: str) -> dict[str, str]:
                     "estimate_text_width",
                     "serialize_p21",
                     "write_p21",
+                    "save_p21_bundle",
+                    "write_p21_bundle",
+                    "to_p2z_bytes",
+                    "save_p2z",
+                    "write_p2z",
                 ):
                     assert f"def {api}(" in stub
                 assert any(n.endswith("LICENSE") for n in names)
@@ -72,11 +77,15 @@ def check(directory: Path, version: str) -> dict[str, str]:
                     "src/writer.rs",
                     "src/authoring.rs",
                     "src/p21_writer.rs",
+                    "src/p21_annotations.rs",
+                    "src/p21_hatches.rs",
+                    "src/p21_bundle.rs",
                     "src/editor.rs",
                     "src/python_editor.rs",
                     "src/ezsxf/_core.pyi",
                     "tests/test_sfc_styles.py",
                     "tests/test_writer_requests.py",
+                    "tests/test_p21_delivery.py",
                     "tests/fixtures/writer_all_features.sfc",
                     "scripts/verify_sfc_mvp.py",
                     "scripts/verify_writer_requests.py",

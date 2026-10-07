@@ -223,6 +223,8 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(write_sfc_bundle, module)?)?;
     module.add_function(wrap_pyfunction!(serialize_p21, module)?)?;
     module.add_function(wrap_pyfunction!(write_p21, module)?)?;
+    module.add_function(wrap_pyfunction!(write_p21_bundle, module)?)?;
+    module.add_function(wrap_pyfunction!(write_p2z, module)?)?;
     Ok(())
 }
 
@@ -242,6 +244,39 @@ fn serialize_p21(parsed: &Bound<'_, PyDict>) -> PyResult<Py<PyBytes>> {
 #[pyfunction]
 fn write_p21(parsed: &Bound<'_, PyDict>, path: &Bound<'_, PyAny>) -> PyResult<()> {
     write_bytes_atomic(&fspath(path)?, &p21_bytes(parsed)?).map_err(Into::into)
+}
+
+fn delivery_error(error: std::io::Error) -> PyErr {
+    if error.kind() == std::io::ErrorKind::InvalidInput {
+        PyValueError::new_err(error.to_string())
+    } else {
+        error.into()
+    }
+}
+
+#[pyfunction]
+#[pyo3(signature = (source, destination, *, file_name=None))]
+fn write_p21_bundle<'py>(
+    source: &Bound<'py, PyAny>,
+    destination: &Bound<'py, PyAny>,
+    file_name: Option<&str>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let doc = crate::editor::SfcDocument::from_bundle(&fspath(source)?)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let report = doc
+        .save_p21_bundle(&fspath(destination)?, file_name)
+        .map_err(delivery_error)?;
+    let result = PyDict::new_bound(source.py());
+    result.set_item("drawing", report.drawing)?;
+    result.set_item("files", report.files)?;
+    Ok(result)
+}
+
+#[pyfunction]
+fn write_p2z(source: &Bound<'_, PyAny>, path: &Bound<'_, PyAny>) -> PyResult<()> {
+    let doc = crate::editor::SfcDocument::from_bundle(&fspath(source)?)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    doc.save_p2z(&fspath(path)?).map_err(delivery_error)
 }
 
 pub(crate) fn fspath(path: &Bound<'_, PyAny>) -> PyResult<std::path::PathBuf> {

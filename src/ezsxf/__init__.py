@@ -19,6 +19,8 @@ from ezsxf._core import (
     serialize_p21,
     write_sfc,
     write_p21,
+    write_p21_bundle,
+    write_p2z,
     write_sfc_bundle,
     validate_saf,
 )
@@ -58,6 +60,13 @@ def _build_cli_parser() -> argparse.ArgumentParser:
     p21_cmd = subcommands.add_parser("to-p21", help="Convert supported SFC elements to SXF P21")
     p21_cmd.add_argument("input", help="Path to input SFC file")
     p21_cmd.add_argument("output", help="Path to output P21 file")
+    bundle_p21 = subcommands.add_parser("bundle-p21", help="Convert SFC and dependencies into a new P21 bundle directory")
+    bundle_p21.add_argument("input", help="Path to input SFC file")
+    bundle_p21.add_argument("output_directory", help="New destination directory")
+    bundle_p21.add_argument("--file-name", help="P21 filename; SAF is renamed consistently")
+    p2z_cmd = subcommands.add_parser("to-p2z", help="Convert SFC and its referenced SAF/images to a compressed P2Z")
+    p2z_cmd.add_argument("input", help="Path to input SFC file")
+    p2z_cmd.add_argument("output", help="Path to output P2Z file")
     resave_cmd.add_argument(
         "--allow-external-references",
         action="store_true",
@@ -188,6 +197,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         return 0
 
+    if args.command in {"bundle-p21", "to-p2z"}:
+        try:
+            if args.command == "bundle-p21":
+                report = write_p21_bundle(args.input, args.output_directory, file_name=args.file_name)
+                print(json.dumps(report, ensure_ascii=False))
+            else:
+                write_p2z(args.input, args.output)
+        except (ValueError, TypeError, OSError) as exc:
+            print(f"P21 delivery error: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
     if args.command == "resave-sfc":
         try:
             parsed = parse_sfc(args.input, strict=True)
@@ -261,6 +282,8 @@ __all__ = [
     "to_dxf",
     "write_sfc",
     "write_p21",
+    "write_p21_bundle",
+    "write_p2z",
     "write_sfc_bundle",
     "validate_saf",
 ]
