@@ -43,6 +43,13 @@ def check(directory: Path, version: str) -> dict[str, str]:
                     "add_line_type",
                     "add_line_width",
                     "save",
+                    "extend",
+                    "create_part",
+                    "to_p21_bytes",
+                    "save_p21",
+                    "estimate_text_width",
+                    "serialize_p21",
+                    "write_p21",
                 ):
                     assert f"def {api}(" in stub
                 assert any(n.endswith("LICENSE") for n in names)
@@ -63,13 +70,18 @@ def check(directory: Path, version: str) -> dict[str, str]:
                     "LICENSE",
                     "src/style_editor.rs",
                     "src/writer.rs",
+                    "src/authoring.rs",
+                    "src/p21_writer.rs",
                     "src/editor.rs",
                     "src/python_editor.rs",
                     "src/ezsxf/_core.pyi",
                     "tests/test_sfc_styles.py",
+                    "tests/test_writer_requests.py",
                     "tests/fixtures/writer_all_features.sfc",
                     "scripts/verify_sfc_mvp.py",
+                    "scripts/verify_writer_requests.py",
                     "docs/sfc-writer-mvp.md",
+                    "docs/p21-writing.md",
                 ):
                     assert required in names, f"Missing source file: {required}"
                 for member in members:

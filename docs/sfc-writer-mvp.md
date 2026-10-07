@@ -1,6 +1,6 @@
 # Basic SFC writer contract
 
-The writer MVP is a standalone SFC document containing a free-size sheet,
+The writer MVP is a standalone SFC document containing a standard or free-size sheet,
 layers, style/font definitions, and lines, circles, circular arcs, polylines
 and text. Its public Python API is available from `ezsxf` in version 0.2.0.
 It has no runtime Python dependencies. Application integration is outside this
@@ -30,6 +30,41 @@ assert ezsxf.parse_sfc("drawing.sfc", strict=True) == doc.to_dict()
 `new_sfc` creates a free-size sheet in millimetres, layer code 1 and font code 1.
 Default styles are black, continuous and 0.13 mm. Its optional `timestamp`
 defaults to the local current datetime; specify it for reproducible output.
+
+For standard paper, use `paper="A1"` (A0..A4 or FREE) and
+`orientation="landscape"` or `"portrait"`. Integer codes are also accepted:
+paper 0..4 or 9; orientation 0 or 1. Defaults remain FREE, landscape, 297×210.
+Standard sizes are derived from the paper and orientation; explicitly supplied
+dimensions must agree. `width_mm`/`height_mm` accept integers and integral floats
+such as `841.0`. FREE dimensions are **integer millimetres in the SFC spec**;
+fractional values such as `841.5` raise `ValueError`. Round explicitly if needed.
+
+## Bulk additions
+
+```python
+ids = doc.extend([
+    {"kind": "line", "start": (0, 0), "end": (100, 0), "layer": layer},
+    {"kind": "circle", "center": (50, 50), "radius": 10},
+    {"kind": "polyline", "points": [(0, 10), (10, 20), (20, 10)]},
+    {"kind": "text", "text": "日本語ABC", "anchor": (0, 30)},
+])
+```
+
+`extend` consumes an iterable of dictionaries with a required `kind`, returning
+entity IDs in input order. It builds all records, clones the drawing once,
+inserts once and validates the complete candidate once. A failure anywhere,
+including an input generator exception, leaves the document unchanged.
+An empty iterable is a no-op. New elements are appended to the sheet, retaining
+existing group definitions and style codes. Style definitions should be created
+before the batch. Complex leaf kinds accepted by `add_feature` also work.
+Fields use `update_element` names from the tables below; basic authoring also
+accepts `start`, `end`, `center` and `anchor` coordinate pairs. Conflicting pair
+and scalar fields are rejected. `to_bytes` still performs final save validation;
+no unchecked document state is exposed. Batch size controls peak memory.
+
+Use `scripts/verify_writer_requests.py` for a release-build timing comparison
+against individual additions. JWW speed parity requires a separate comparison
+on the same machine, input and validation boundary.
 
 Factories return **SXF codes**, while geometry additions return **entity IDs**.
 Always pass the returned codes to geometry methods; a code is not an entity ID.
@@ -102,6 +137,13 @@ owner; see [complex editing](sfc-editing.md) for references and hierarchy limits
 - Text `width` is the **complete box width**, not one character's width.
   `height` is its height. Default `base_point=1` means lower left; `direction=1`
   means horizontal writing. See the method type stubs for other parameters.
+- Omitted `width` (or `None` in `add_text`) estimates a horizontal monospaced box:
+  full-width CP932 glyphs use `height`, single-byte glyphs use `height / 2`, and
+  `spacing` is added between Unicode characters. `estimate_text_width(text,
+  height=3.5, spacing=0.0)` exposes the same rule. Only the generated estimate is
+  rounded to six decimal places. Explicit width is preserved. Vertical text
+  requires explicit width; proportional fonts need application-specific metrics.
+  Updating text or height retains the existing width unless explicitly changed.
 - Length fields accept at most six fractional digits; angles/scales at most
   fifteen digits. Values must be finite and within each feature's bounds.
   Excess precision fails without rounding; prepare values explicitly before
@@ -129,12 +171,14 @@ are rejected. It does not provide power-loss durability.
 
 The MVP output is standalone: no SAF, images or external references are needed.
 Use the existing bundle APIs for those dependencies; they have a separate
-acceptance scope. P21 output, complete CAD editing support and lossless re-export
-through arbitrary third-party CAD are outside this basic contract.
+acceptance scope. [P21 output](p21-writing.md) has a separate supported subset.
+Complete CAD editing support and lossless re-export through arbitrary third-party
+CAD are outside this basic contract.
 
 For complete save semantics and external dependencies, see [SFC saving](sfc-writing.md)
 and [SAF/image bundles](sfc-bundles.md). See [compatibility](compatibility.md) for
 CAD display and re-export limits.
 
 The style and geometry definitions follow the SXF Ver.3.1 Feature Specification,
-second edition, printed pp.12–17 (style codes), pp.24 and 28 (arcs and text).
+second edition, printed p.10 (paper), pp.12–17 (style codes), pp.24 and 28 (arcs
+and text), and Implementation Agreement §1-5 (monospaced text width).

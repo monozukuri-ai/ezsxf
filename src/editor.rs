@@ -59,6 +59,29 @@ pub(crate) fn basic(keyword: &str) -> bool {
 }
 
 impl SfcDocument {
+    /// Standard-paper convenience while retaining the FREE integer-mm contract.
+    pub fn new_with_paper(
+        file_name: &str,
+        name: &str,
+        paper: i64,
+        orientation: i64,
+        dimensions: (Option<f64>, Option<f64>),
+        timestamp: &str,
+    ) -> Result<Self, WriteError> {
+        let (x, y) =
+            crate::authoring::sheet_dimensions(paper, orientation, dimensions.0, dimensions.1)?;
+        let mut document = Self::new(file_name, name, x, y, timestamp)?;
+        if paper != 9 || orientation != 1 {
+            let mut candidate = document.output.document.clone();
+            let EntityBody::Simple(sheet) = &mut candidate.entities[5].body else {
+                unreachable!()
+            };
+            sheet.parameters[1] = string(paper);
+            sheet.parameters[2] = string(orientation);
+            document.commit(candidate)?;
+        }
+        Ok(document)
+    }
     /// Create a free-size sheet in millimetres with layer/font code 1.
     pub fn new(
         file_name: &str,

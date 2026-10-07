@@ -33,6 +33,7 @@ does not establish authoring/export support.
 | Jw_cad 10.03.6, native Windows with Japanese system/user cultures | Tested basic Japanese drawings retained text and resolved geometry/styles through save, overwrite and reopen. The tested group/part SFC exports failed with `30002: SFIG_LOCATE`. |
 | Jw_cad 10.03.6, Wine with Japanese code page and font substitutes | The basic writer input displayed five primitive kinds, predefined/custom styles and Japanese text. Standard backslashes displayed doubled yen glyphs; the literal variant displayed one. This is visual import evidence for that input. |
 | Jw_cad 8.25a, native Japanese Windows profile | Tested group hierarchy, shared-part reuse, geometry and placement survived export, but group names and sheet metadata changed. SAF/image attachment names were rewritten, losing attribute and raster bindings. Complete source-to-export equality failed. |
+| Jw_cad 8.25a, 2026-10-07 native Windows, ja-JP system/ANSI 932 and en-US user culture | Twelve generated SFC/P21 inputs retained basic geometry, all nine horizontal text anchors, shared parts and 1/1–1/100 partial-drawing placements through JWW save/reopen. Six SFC/P21 pairs matched independently. Layer-group scale stayed 1; the partial-drawing ratios remained on blocks. This qualifies the listed imports/JWW storage, not native SFC re-export or OCF certification. |
 | DynaCAD Viewer 9.0, tested Japanese Windows/Wine profiles | Tested SAF values and actual TIFF/JPEG image patterns displayed, including edited placements. This qualifies viewing of those inputs, not CAD re-export. |
 | VoiCeFREE 3.5.5.3, tested Japanese Wine profile | Japanese text displayed; the tested ATRU image cases showed empty frame outlines. SAF/raster-preserving re-export is not established. |
 
@@ -40,7 +41,8 @@ The basic writer's native Windows build/filesystem saving is verified separately
 from the CAD observations. A fresh native Windows CAD review of the 0.2.0 custom
 style input has not been completed. [Basic writing](sfc-writer-mvp.md),
 [complex editing](sfc-editing.md) and [SAF/image bundles](sfc-bundles.md) describe
-the library's own guarantees.
+the library's own guarantees. See [P21 writing](p21-writing.md) for the later
+bounded P21 and native-scale qualification.
 
 ## Checking a target CAD's re-export
 

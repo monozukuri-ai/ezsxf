@@ -123,6 +123,14 @@ class P21DrawingBuilder:
                 if len(params) >= 2:
                     self.sheet_items = list(_references(params[1]))
 
+        # INVISIBILITY may target a layer assignment, rather than each occurrence.
+        for entity_id in tuple(self.hidden):
+            layer = self.records.get(entity_id, {}).get("PRESENTATION_LAYER_ASSIGNMENT")
+            if layer is not None:
+                params = layer.get("parameters", [])
+                if len(params) >= 3:
+                    self.hidden.update(_references(params[2]))
+
     def _find_background_color(self) -> Color:
         for records in self.records.values():
             relevant = (
@@ -442,8 +450,9 @@ class P21DrawingBuilder:
         text_value = decode_step_string(str(params[1]))
         if not text_value:
             return
-        x_vector = apply_vector(placement, (1.0, 0.0))
-        y_vector = apply_vector(placement, (0.0, 1.0))
+        vertical = _enum_value(params[4]) == "DOWN"
+        x_vector = apply_vector(placement, (0.0, 1.0) if vertical else (1.0, 0.0))
+        y_vector = apply_vector(placement, (-1.0, 0.0) if vertical else (0.0, 1.0))
         font_name = self._font_name(_reference(params[5]))
         text_style = RenderStyle(
             layer=style.layer,
@@ -453,17 +462,17 @@ class P21DrawingBuilder:
             font_name=font_name or style.font_name,
             visible=style.visible,
         )
+        base_point = _text_base_point(str(params[0]))
         primitive = TextPrimitive(
             text=text_value,
-            anchor=apply(
-                placement,
-                (0.0, _text_vertical_offset(_text_base_point(str(params[0])), height)),
-            ),
+            # The AP202 baseline origin and SXF box anchor differ. Retain the
+            # convention used by the paired corpus and the native SXF library.
+            anchor=apply(placement, (0.0, _text_vertical_offset(base_point, height))),
             height=height * math.hypot(*y_vector),
             width=width * math.hypot(*x_vector),
             angle_deg=math.degrees(math.atan2(x_vector[1], x_vector[0])),
-            base_point=_text_base_point(str(params[0])),
-            direction=1,
+            base_point=base_point,
+            direction=2 if vertical else 1,
             style=text_style,
             source_id=source_id,
         )
@@ -809,12 +818,26 @@ class P21DrawingBuilder:
                     _clamp_color(int(round(float(channel) * 255.0)))
                     for channel in params[1:4]
                 )  # type: ignore[assignment]
+                # AP202 uses 0.75/0.5/0.25 for the additional predefined SXF
+                # colours, while their SFC channels are 192/128/64.
+                name = decode_step_string(str(params[0])).removeprefix("$$SXF_")
+                predefined = _COLOR_NAMES.get(name)
+                if predefined is not None and all(
+                    abs(a - b) <= 1 for a, b in zip(values.color, predefined)
+                ):
+                    values.color = predefined
 
         line_type = records.get("DRAUGHTING_PRE_DEFINED_CURVE_FONT")
         if line_type is not None:
             params = line_type.get("parameters", [])
             if params:
                 values.line_type = " ".join(str(params[0]).lower().split())
+
+        custom_line_type = records.get("CURVE_STYLE_FONT")
+        if custom_line_type is not None:
+            params = custom_line_type.get("parameters", [])
+            if params:
+                values.line_type = decode_step_string(str(params[0])).removeprefix("$$SXF_")
 
         measure = records.get("LENGTH_MEASURE_WITH_UNIT")
         if measure is not None:
@@ -987,8 +1010,9 @@ class P21DrawingBuilder:
             rotation = math.atan2(axis[1], axis[0])
             start_angle = round(math.degrees(start + rotation), 10)
             end_angle = round(math.degrees(end + rotation), 10)
-            counter_clockwise_sweep = (end_angle - start_angle) % 360.0
-            direction_flag = 0 if counter_clockwise_sweep <= 180.0 else 1
+            # Sense is independent of sweep size: clockwise/major arcs must not
+            # silently become their shorter, oppositely directed counterpart.
+            direction_flag = 0 if agrees else 1
             radius = float(circle_params[2])
             points = sample_arc(
                 center,
@@ -1156,7 +1180,12 @@ def _strings(value: Any) -> Iterable[str]:
     if isinstance(value, str):
         yield value
     elif isinstance(value, Mapping):
-        for child in value.values():
+        children = (
+            value.get("parameters", [])
+            if value.get("kind") == "typed"
+            else value.values()
+        )
+        for child in children:
             yield from _strings(child)
     elif isinstance(value, (list, tuple)):
         for child in value:

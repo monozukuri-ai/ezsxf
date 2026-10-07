@@ -141,63 +141,120 @@ pub(crate) fn update_fields(
     Ok(())
 }
 
+pub(crate) fn authored_record(
+    kind: &str,
+    changes: &BTreeMap<String, Value>,
+) -> Result<Record, WriteError> {
+    if let Some(record) = crate::authoring::basic_record(kind, changes)? {
+        return Ok(record);
+    }
+    let keyword =
+        feature_keyword(kind).ok_or_else(|| error("Unsupported authored feature kind"))?;
+    let names = fields(keyword);
+    let mut p: Vec<Value> = names
+        .iter()
+        .map(|name| {
+            if name == "text" {
+                return string("");
+            }
+            if matches!(name.as_str(), "xs" | "ys") {
+                return string("(0.0,10.0)");
+            }
+            if name == "number" {
+                return string(2);
+            }
+            if matches!(
+                name.as_str(),
+                "layer"
+                    | "color"
+                    | "line_type"
+                    | "line_width"
+                    | "font"
+                    | "open_close"
+                    | "text_base_point"
+                    | "text_direction"
+                    | "marker"
+                    | "arrow_code"
+            ) || name.ends_with("scale")
+            {
+                return string(1);
+            }
+            if matches!(
+                name.as_str(),
+                "radius" | "radius_x" | "radius_y" | "parameter"
+            ) {
+                return number(10.0);
+            }
+            if matches!(name.as_str(), "text_height" | "text_width") {
+                return number(3.5);
+            }
+            string(0)
+        })
+        .collect();
+    if changes.contains_key("text") {
+        if let Some(i) = names.iter().position(|n| n == "text_present") {
+            p[i] = string(1);
+        }
+    }
+    let mut r = record(keyword, p);
+    update_fields(&mut r, changes)?;
+    Ok(r)
+}
+
 impl SfcDocument {
     pub fn add_feature(
         &mut self,
         kind: &str,
         changes: &BTreeMap<String, Value>,
     ) -> Result<i64, WriteError> {
-        let keyword =
-            feature_keyword(kind).ok_or_else(|| error("Unsupported authored feature kind"))?;
-        let names = fields(keyword);
-        let mut p: Vec<Value> = names
+        self.add_authored_record(authored_record(kind, changes)?)
+    }
+
+    /// Add every element to the sheet in one transaction. One clone, ID scan,
+    /// splice and strict validation; failed input leaves the snapshot unchanged.
+    pub fn extend(
+        &mut self,
+        elements: &[(String, BTreeMap<String, Value>)],
+    ) -> Result<Vec<i64>, WriteError> {
+        let records = elements
             .iter()
-            .map(|name| {
-                if name == "text" {
-                    return string("");
-                }
-                if matches!(name.as_str(), "xs" | "ys") {
-                    return string("(0.0,10.0)");
-                }
-                if name == "number" {
-                    return string(2);
-                }
-                if matches!(
-                    name.as_str(),
-                    "layer"
-                        | "color"
-                        | "line_type"
-                        | "line_width"
-                        | "font"
-                        | "open_close"
-                        | "text_base_point"
-                        | "text_direction"
-                        | "marker"
-                        | "arrow_code"
-                ) || name.ends_with("scale")
-                {
-                    return string(1);
-                }
-                if matches!(
-                    name.as_str(),
-                    "radius" | "radius_x" | "radius_y" | "parameter"
-                ) {
-                    return number(10.0);
-                }
-                if matches!(name.as_str(), "text_height" | "text_width") {
-                    return number(3.5);
-                }
-                string(0)
+            .enumerate()
+            .map(|(index, (kind, fields))| {
+                authored_record(kind, fields).map_err(|e| error(format!("Element {index}: {e}")))
             })
-            .collect();
-        if changes.contains_key("text") {
-            if let Some(i) = names.iter().position(|n| n == "text_present") {
-                p[i] = string(1);
-            }
+            .collect::<Result<Vec<_>, _>>()?;
+        if records.is_empty() {
+            return Ok(Vec::new());
         }
-        let mut r = record(keyword, p);
-        update_fields(&mut r, changes)?;
-        self.add_authored_record(r)
+        let first = self.next_id()?;
+        let count = i64::try_from(records.len()).map_err(|_| error("Too many elements"))?;
+        first
+            .checked_add(count - 1)
+            .ok_or_else(|| error("Entity ID overflow"))?;
+        let sheet = self
+            .output
+            .document
+            .sfc_model
+            .as_ref()
+            .unwrap()
+            .sheet
+            .as_ref()
+            .unwrap()
+            .entity_id;
+        let mut document = self.output.document.clone();
+        let index = document
+            .entities
+            .iter()
+            .position(|e| e.id == sheet)
+            .unwrap();
+        let ids: Vec<_> = (0..count).map(|offset| first + offset).collect();
+        let entities = records
+            .into_iter()
+            .zip(&ids)
+            .map(|(r, id)| instance(*id, r));
+        document.entities.splice(index..index, entities);
+        self.commit(document)?;
+        Ok(ids)
     }
     pub(crate) fn add_authored_record(&mut self, r: Record) -> Result<i64, WriteError> {
         let id = self.next_id()?;
@@ -272,7 +329,7 @@ impl SfcDocument {
         &mut self,
         selected: &BTreeSet<i64>,
         marker: EntityInstance,
-        placement: Option<EntityInstance>,
+        placements: &[EntityInstance],
     ) -> Result<(), WriteError> {
         let mut document = self.output.document.clone();
         let start = document.entities.iter().rposition(|e| {
@@ -289,16 +346,16 @@ impl SfcDocument {
             .cloned()
             .collect();
         document.entities.clear();
+        let mut placed = false;
         for (i, e) in original.into_iter().enumerate() {
             if i == start {
                 document.entities.extend(children.clone());
                 document.entities.push(marker.clone());
             }
             if selected.contains(&e.id) {
-                if let Some(p) = &placement {
-                    if !document.entities.iter().any(|n| n.id == p.id) {
-                        document.entities.push(p.clone());
-                    }
+                if !placed {
+                    document.entities.extend_from_slice(placements);
+                    placed = true;
                 }
             } else {
                 document.entities.push(e);
@@ -336,9 +393,55 @@ impl SfcDocument {
         self.wrap_sheet_components(
             &selected,
             marker,
-            Some(instance(placement_id, record("sfig_locate_feature", p))),
+            &[instance(placement_id, record("sfig_locate_feature", p))],
         )?;
         Ok(placement_id)
+    }
+
+    /// Define a shared part and only the explicitly requested placements.
+    /// A complete transaction avoids both a phantom origin placement and an
+    /// invalid, unreferenced definition between separate builder operations.
+    pub fn create_part(
+        &mut self,
+        name: &str,
+        ids: &[i64],
+        placements: &[Vec<Value>],
+    ) -> Result<Vec<i64>, WriteError> {
+        if placements.is_empty() {
+            return Err(error("A part needs at least one explicit placement"));
+        }
+        if name.starts_with("$$ATR") {
+            return Err(error("Reserved attribute group name"));
+        }
+        let selected = self.selected_sheet_components(ids)?;
+        let definition_id = self.next_id()?;
+        let mut instances = Vec::new();
+        let mut placement_ids = Vec::new();
+        for (index, placement) in placements.iter().enumerate() {
+            if placement.len() != 6 {
+                return Err(error("Invalid placement fields"));
+            }
+            let offset = i64::try_from(index)
+                .ok()
+                .and_then(|v| v.checked_add(1))
+                .ok_or_else(|| error("Entity ID overflow"))?;
+            let id = definition_id
+                .checked_add(offset)
+                .ok_or_else(|| error("Entity ID overflow"))?;
+            let mut parameters = vec![placement[0].clone(), string(name)];
+            parameters.extend_from_slice(&placement[1..]);
+            instances.push(instance(id, record("sfig_locate_feature", parameters)));
+            placement_ids.push(id);
+        }
+        self.wrap_sheet_components(
+            &selected,
+            instance(
+                definition_id,
+                record("sfig_org_feature", vec![string(name), string(4)]),
+            ),
+            &instances,
+        )?;
+        Ok(placement_ids)
     }
     pub fn ungroup(&mut self, placement_id: i64) -> Result<(), WriteError> {
         let model = self.output.document.sfc_model.as_ref().unwrap();
@@ -478,7 +581,7 @@ impl SfcDocument {
         self.wrap_sheet_components(
             &selected,
             instance(id, record("composite_curve_feature", p)),
-            None,
+            &[],
         )?;
         Ok(id)
     }
@@ -709,6 +812,53 @@ mod tests {
             number(1.0),
             number(1.0),
         ]
+    }
+    #[test]
+    fn batch_validation_rolls_back_and_preserves_existing_definition() {
+        let mut doc = document();
+        let child = ellipse(&mut doc, 20.0);
+        let group = doc
+            .group_elements("group", &[child], 3, &identity())
+            .unwrap();
+        let before = doc.output.clone();
+        let valid = ("circle".into(), BTreeMap::new());
+        let invalid = (
+            "circle".into(),
+            BTreeMap::from([("radius".into(), Value::Real(-1.0))]),
+        );
+        assert!(doc.extend(&[valid.clone(), invalid]).is_err());
+        assert_eq!(doc.output, before);
+        assert!(doc.extend(&[]).unwrap().is_empty());
+        let ids = doc.extend(&[valid.clone(), valid]).unwrap();
+        let model = doc.output.document.sfc_model.as_ref().unwrap();
+        assert_eq!(
+            model.sheet.as_ref().unwrap().component_ids,
+            [group, ids[0], ids[1]]
+        );
+        assert_eq!(
+            model.sfig_definitions,
+            before.document.sfc_model.unwrap().sfig_definitions
+        );
+    }
+    #[test]
+    fn explicit_shared_part_is_atomic_and_has_no_origin_placement() {
+        let mut doc = document();
+        let child = ellipse(&mut doc, 20.0);
+        let before = doc.output.clone();
+        let mut placement = identity();
+        placement[0] = string(1);
+        placement[1] = number(100.0);
+        let mut bad = placement.clone();
+        bad[4] = number(0.0);
+        assert!(doc
+            .create_part("part", &[child], &[placement.clone(), bad])
+            .is_err());
+        assert_eq!(doc.output, before);
+        let ids = doc.create_part("part", &[child], &[placement]).unwrap();
+        let model = doc.output.document.sfc_model.as_ref().unwrap();
+        assert_eq!(model.sheet.as_ref().unwrap().component_ids, ids);
+        assert_eq!(model.sfig_references.len(), 1);
+        assert_eq!(model.sfig_definitions[0].component_ids, [child]);
     }
     #[test]
     fn complex_geometry_preserves_version_and_rollback() {

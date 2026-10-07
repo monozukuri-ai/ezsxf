@@ -5,6 +5,7 @@ and PyO3. Python 3.9 or later is supported.
 
 - Parse P21/SFC from a file path, text or bytes, with strict or lenient recovery.
 - Create, edit and save SFC geometry, text, styles, groups, dimensions and hatches.
+- Add elements in a single validated batch and export supported drawings to P21.
 - Deliver drawings with SAF attributes and TIFF/JPEG dependencies.
 - Export DXF or plot drawings with the optional matplotlib backend.
 
@@ -29,13 +30,14 @@ source requires Rust; see [Contributing](CONTRIBUTING.md).
 ```python
 import ezsxf
 
-doc = ezsxf.new_sfc("drawing.sfc", name="Drawing", width_mm=297, height_mm=210)
+doc = ezsxf.new_sfc("drawing.sfc", name="Drawing", paper="A1", orientation="landscape")
 layer = doc.add_layer("Structure")
 color = doc.add_color((32, 96, 160))
 doc.add_line((10, 10), (100, 50), layer=layer, color=color)
 doc.add_circle((50, 50), 10, layer=layer)
-doc.add_text("SXF 日本語", (10, 80), height=3.5, width=30)
+doc.add_text("SXF 日本語", (10, 80), height=3.5)  # estimates a monospaced box width
 doc.save("drawing.sfc")
+doc.save_p21("drawing.p21")
 
 parsed = ezsxf.parse_sfc("drawing.sfc", strict=True)
 ezsxf.write_sfc(parsed, "copy.sfc")
@@ -53,6 +55,7 @@ files should be delivered with the bundle APIs.
 python -m ezsxf parse sfc drawing.sfc --pretty
 python -m ezsxf to-dxf drawing.sfc drawing.dxf
 python -m ezsxf resave-sfc drawing.sfc copy.sfc
+python -m ezsxf to-p21 drawing.sfc drawing.p21
 ```
 
 Run `python -m ezsxf --help` or see the [CLI guide](docs/cli.md).
@@ -62,7 +65,7 @@ Run `python -m ezsxf --help` or see the [CLI guide](docs/cli.md).
 | Format | Support |
 | --- | --- |
 | SFC | All 34 SXF Ver.3.1 feature types are parsed with resolved hierarchy, style codes and attribute attachments. Saving and supported editing APIs retain the SFC model. |
-| P21 | Generic Part 21 entities and conversion of supported drawing geometry. P21 output is not implemented. |
+| P21 | Generic Part 21 parsing and drawing conversion. AP202 output from SFC models supports lines, circles, arcs, polylines, text, styles, mathematical partial drawings, groups and shared parts. Unsupported features fail before saving; see [P21 writing](docs/p21-writing.md). |
 
 Model preservation and third-party CAD display/re-export have separate limits.
 See [compatibility](docs/compatibility.md) for Japanese text, backslashes,
@@ -75,6 +78,7 @@ Start with the [documentation index](docs/README.md), or choose a guide:
 - [Reading P21/SFC and parse results](docs/usage.md)
 - [Saving existing SFC drawings](docs/sfc-writing.md)
 - [Basic SFC creation, editing and style codes](docs/sfc-writer-mvp.md)
+- [P21 export and interoperability checks](docs/p21-writing.md)
 - [Complex elements, groups, dimensions and hatches](docs/sfc-editing.md)
 - [SAF attributes, images and bundle delivery](docs/sfc-bundles.md)
 - [Title-block attribute names](docs/title-block-attributes.md)

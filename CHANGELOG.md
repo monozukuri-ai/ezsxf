@@ -6,6 +6,21 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Added
+- Atomic `SfcDocument.extend` for one-pass batch validation and `create_part`
+  for shared definitions with only explicit placements.
+- Standard A0..A4/FREE paper codes and orientations, with integral-float paper
+  dimensions and explicit rejection of fractional SFC millimetres.
+- Horizontal CP932 monospaced text-box estimates when width is omitted.
+- AP202 P21 generation for basic curves/text, styles, mathematical partial
+  drawings, groups and shared parts; Python save/bytes APIs and `to-p21` CLI.
+  Unsupported features fail before replacing the destination.
+- Reproducible batch timings and Windows scale-review inputs.
+
+### Fixed
+- P21 drawing conversion now retains typed font identifiers and vertical-text
+  transforms, and honours clockwise/major circular arcs and hidden layers.
+
 ## [0.2.0] - 2026-10-06
 
 ### Added

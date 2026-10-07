@@ -8,6 +8,7 @@ These guides describe the public API and its supported scope.
 | Read P21/SFC and inspect parser output | [Reading and parse results](usage.md) |
 | Resave an existing SFC drawing | [SFC saving](sfc-writing.md) |
 | Create/edit basic elements and styles | [Basic writer contract](sfc-writer-mvp.md) |
+| Export supported drawings to SXF P21 | [P21 writing](p21-writing.md) |
 | Edit complex geometry, groups, dimensions and hatches | [Complex editing](sfc-editing.md) |
 | Deliver or edit SAF attributes and images | [SAF/image bundles](sfc-bundles.md) |
 | Interpret title-block attributes | [Title-block attribute names](title-block-attributes.md) |

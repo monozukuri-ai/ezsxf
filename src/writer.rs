@@ -416,7 +416,7 @@ fn real_literal(value: f64) -> String {
     number
 }
 
-fn emit_values(
+pub(crate) fn emit_values(
     text: &mut String,
     values: &[Value],
     semantic: bool,

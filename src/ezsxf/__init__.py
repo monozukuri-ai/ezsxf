@@ -10,12 +10,15 @@ from ezsxf._core import (
     SfcDocument,
     edit_sfc,
     edit_sfc_bundle,
+    estimate_text_width,
     hello_from_bin,
     new_sfc,
     parse_p21,
     parse_sfc,
     serialize_sfc,
+    serialize_p21,
     write_sfc,
+    write_p21,
     write_sfc_bundle,
     validate_saf,
 )
@@ -52,6 +55,9 @@ def _build_cli_parser() -> argparse.ArgumentParser:
     )
     resave_cmd.add_argument("input", help="Path to input SFC file")
     resave_cmd.add_argument("output", help="Path to output SFC file")
+    p21_cmd = subcommands.add_parser("to-p21", help="Convert supported SFC elements to SXF P21")
+    p21_cmd.add_argument("input", help="Path to input SFC file")
+    p21_cmd.add_argument("output", help="Path to output P21 file")
     resave_cmd.add_argument(
         "--allow-external-references",
         action="store_true",
@@ -174,6 +180,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         return 0
 
+    if args.command == "to-p21":
+        try:
+            write_p21(parse_sfc(args.input, strict=True), args.output)
+        except (ValueError, TypeError, OSError) as exc:
+            print(f"P21 conversion error: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
     if args.command == "resave-sfc":
         try:
             parsed = parse_sfc(args.input, strict=True)
@@ -238,12 +252,15 @@ __all__ = [
     "hello_from_bin",
     "main",
     "new_sfc",
+    "estimate_text_width",
     "parse_p21",
     "parse_sfc",
     "plot",
     "serialize_sfc",
+    "serialize_p21",
     "to_dxf",
     "write_sfc",
+    "write_p21",
     "write_sfc_bundle",
     "validate_saf",
 ]

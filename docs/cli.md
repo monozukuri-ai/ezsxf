@@ -19,6 +19,9 @@ python -m ezsxf resave-sfc drawing.sfc copy.sfc
 # preserve external references; arrange SAF/image files separately
 python -m ezsxf resave-sfc drawing.sfc copy.sfc --allow-external-references
 
+# export the supported SFC subset to AP202 P21
+python -m ezsxf to-p21 drawing.sfc drawing.p21
+
 # deliver SFC/SAF/images together into a new directory
 python -m ezsxf bundle-sfc drawing.sfc delivery --file-name renamed.sfc
 
@@ -28,4 +31,4 @@ python -m ezsxf plot drawing.sfc
 ```
 
 Plotting requires the `plot` extra. See [conversion](conversion.md) and
-[SFC saving](sfc-writing.md) for behavior and limits.
+[SFC saving](sfc-writing.md) and [P21 writing](p21-writing.md) for behavior and limits.

@@ -41,6 +41,8 @@ include = [
     "/tests/test_sfc_complex_editor.py",
     "/tests/test_sfc_reexport_verification.py",
     "/tests/test_sfc_styles.py",
+    "/tests/test_writer_requests.py",
+    "/scripts/verify_writer_requests.py",
     "/scripts/verify_sfc_windows.ps1",
     "/scripts/verify_sfc_platform.py",
     "/scripts/verify_sfc_mvp.py",

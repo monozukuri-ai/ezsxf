@@ -101,6 +101,23 @@ definition and every placement together. `add_to_group` moves sheet components
 into an existing definition; illegal parent relationships and forward references
 are rejected. It does not apply a coordinate transformation to moved geometry.
 
+To create a shared part without an implicit origin placement, use:
+
+```python
+placements = doc.create_part("Symbol", [line, ellipse], [
+    {"position": (80, 40), "angle": 15, "scale": (2, 1), "layer": 1},
+    {"position": (140, 40)},
+])
+```
+
+This consumes sheet components and creates the kind-4 definition and all explicit
+placements in one transaction. Each placement needs `position`; `angle`, `scale`
+and `layer` default to 0, `(1,1)` and 1. At least one placement is required.
+Rendering starts from `model.sheet.component_ids`, following definition references;
+`typed_features` includes local definition geometry and is not a list of sheet
+rendering roots. `group_elements(kind=4)` continues to create a first placement
+at its specified position, which defaults to the origin.
+
 `ungroup` unwraps only identity drawing groups, including nested ones. It does
 not flatten transformed parts or partial drawings. Deleting a part placement
 with `remove_element` succeeds when other placements keep its definition in
@@ -145,5 +162,6 @@ validation of regions remain outside this API; existing such records are
 preserved by resaving.
 
 SAF attachment/image operations retain their documented direct-basic-element
-scope. Grouped attribute authoring, automatic dimension layout, arbitrary
-container reparenting and P21 generation are not provided.
+scope. Grouped attribute authoring, automatic dimension layout and arbitrary
+container reparenting are not provided. [P21 generation](p21-writing.md) covers
+a separate subset of the editable features.

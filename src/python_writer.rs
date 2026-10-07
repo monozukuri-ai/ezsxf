@@ -221,7 +221,27 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(serialize_sfc, module)?)?;
     module.add_function(wrap_pyfunction!(write_sfc, module)?)?;
     module.add_function(wrap_pyfunction!(write_sfc_bundle, module)?)?;
+    module.add_function(wrap_pyfunction!(serialize_p21, module)?)?;
+    module.add_function(wrap_pyfunction!(write_p21, module)?)?;
     Ok(())
+}
+
+fn p21_bytes(parsed: &Bound<'_, PyDict>) -> PyResult<Vec<u8>> {
+    let bytes = encode_python(parsed, false, false)?;
+    let output = crate::parser::parse_from_bytes(FileFormat::Sfc, &bytes, true)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    crate::p21_writer::serialize_p21(&output)
+        .map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn serialize_p21(parsed: &Bound<'_, PyDict>) -> PyResult<Py<PyBytes>> {
+    Ok(PyBytes::new_bound(parsed.py(), &p21_bytes(parsed)?).unbind())
+}
+
+#[pyfunction]
+fn write_p21(parsed: &Bound<'_, PyDict>, path: &Bound<'_, PyAny>) -> PyResult<()> {
+    write_bytes_atomic(&fspath(path)?, &p21_bytes(parsed)?).map_err(Into::into)
 }
 
 pub(crate) fn fspath(path: &Bound<'_, PyAny>) -> PyResult<std::path::PathBuf> {

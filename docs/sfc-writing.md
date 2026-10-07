@@ -13,8 +13,8 @@ record order, parameter values, the typed features, hierarchy, style codes and
 attribute attachments. Output uses Shift-JIS/CP932 and CRLF line endings.
 Comments, whitespace, original encoding and quote spelling are not preserved.
 The header is retained, including `FILE_NAME` and the original timestamp, even
-when writing to a different path. New drawing construction and P21 output are
-not supported by these functions.
+when writing to a different path. Use `new_sfc` to construct new drawings and
+the separate [P21 export API](p21-writing.md) for AP202 output.
 
 `entities` and `header.entities` are the serialization source. Before returning
 bytes or touching the destination, the writer checks field syntax and precision,

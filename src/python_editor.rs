@@ -61,6 +61,60 @@ fn points(value: &Bound<'_, PyAny>) -> PyResult<Value> {
         .map(Value::List)
 }
 
+fn fields_from_dict(
+    fields: &Bound<'_, PyDict>,
+    skip_kind: bool,
+) -> PyResult<BTreeMap<String, Value>> {
+    let mut result = BTreeMap::new();
+    for (key, value) in fields {
+        let key = key.extract::<String>()?;
+        if skip_kind && key == "kind" {
+            continue;
+        }
+        let value = if matches!(key.as_str(), "points" | "vertices") {
+            points(&value)?
+        } else if matches!(key.as_str(), "start" | "end" | "center" | "anchor") {
+            if !value.is_instance_of::<PyList>() && !value.is_instance_of::<PyTuple>() {
+                return Err(PyTypeError::new_err(format!(
+                    "{key} must be a coordinate pair"
+                )));
+            }
+            Value::List(
+                value
+                    .iter()?
+                    .map(|v| scalar(&v?))
+                    .collect::<PyResult<Vec<_>>>()?,
+            )
+        } else {
+            scalar(&value)?
+        };
+        result.insert(key, value);
+    }
+    Ok(result)
+}
+
+fn named_code(
+    value: Option<&Bound<'_, PyAny>>,
+    names: &[(&str, i64)],
+    default: i64,
+    field: &str,
+) -> PyResult<i64> {
+    let Some(value) = value else {
+        return Ok(default);
+    };
+    match scalar(value)? {
+        Value::Integer(code) => Ok(code),
+        Value::String(name) => names
+            .iter()
+            .find(|(n, _)| name.trim().eq_ignore_ascii_case(n))
+            .map(|(_, code)| *code)
+            .ok_or_else(|| PyValueError::new_err(format!("Unknown {field}: {name}"))),
+        _ => Err(PyTypeError::new_err(format!(
+            "{field} must be a name or integer code"
+        ))),
+    }
+}
+
 #[pyclass(name = "SfcDocument", module = "ezsxf._core")]
 struct PythonSfcDocument {
     document: SfcDocument,
@@ -69,6 +123,29 @@ struct PythonSfcDocument {
 #[pymethods]
 #[allow(clippy::too_many_arguments)]
 impl PythonSfcDocument {
+    fn to_p21_bytes(&self, py: Python<'_>) -> PyResult<Py<PyBytes>> {
+        let bytes = crate::p21_writer::serialize_p21(self.document.snapshot()).map_err(error)?;
+        Ok(PyBytes::new_bound(py, &bytes).unbind())
+    }
+    fn save_p21(&self, path: &Bound<'_, PyAny>) -> PyResult<()> {
+        let bytes = crate::p21_writer::serialize_p21(self.document.snapshot()).map_err(error)?;
+        write_bytes_atomic(&crate::python_writer::fspath(path)?, &bytes).map_err(Into::into)
+    }
+    fn extend(&mut self, elements: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
+        let mut inputs = Vec::new();
+        for (index, item) in elements.iter()?.enumerate() {
+            let item = item?;
+            let item = item
+                .downcast::<PyDict>()
+                .map_err(|_| PyTypeError::new_err(format!("Element {index} must be a dict")))?;
+            let kind = item
+                .get_item("kind")?
+                .ok_or_else(|| PyValueError::new_err(format!("Element {index} needs kind")))?
+                .extract::<String>()?;
+            inputs.push((kind, fields_from_dict(item, true)?));
+        }
+        self.document.extend(&inputs).map_err(error)
+    }
     fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         crate::python::output_to_python(py, self.document.snapshot())
     }
@@ -420,13 +497,13 @@ impl PythonSfcDocument {
             .add_polyline([layer, color, line_type, line_width], &points)
             .map_err(error)
     }
-    #[pyo3(signature = (text, anchor, *, height=3.5, width=3.5, spacing=0.0, angle=0.0, slant=0.0, base_point=1, direction=1, layer=1, color=1, font=1))]
+    #[pyo3(signature = (text, anchor, *, height=3.5, width=None, spacing=0.0, angle=0.0, slant=0.0, base_point=1, direction=1, layer=1, color=1, font=1))]
     fn add_text(
         &mut self,
         text: &str,
         anchor: (f64, f64),
         height: f64,
-        width: f64,
+        width: Option<f64>,
         spacing: f64,
         angle: f64,
         slant: f64,
@@ -436,6 +513,16 @@ impl PythonSfcDocument {
         color: i64,
         font: i64,
     ) -> PyResult<i64> {
+        let width =
+            match width {
+                Some(value) => value,
+                None if direction == 1 => {
+                    crate::authoring::estimate_text_width(text, height, spacing).map_err(error)?
+                }
+                None => return Err(PyValueError::new_err(
+                    "Automatic text width supports horizontal text; supply width for vertical text",
+                )),
+            };
         self.document
             .add_element(
                 "text_string_feature",
@@ -484,19 +571,75 @@ impl PythonSfcDocument {
     }
     #[pyo3(signature = (kind, **fields))]
     fn add_feature(&mut self, kind: &str, fields: Option<&Bound<'_, PyDict>>) -> PyResult<i64> {
-        let mut changes = BTreeMap::new();
-        if let Some(fields) = fields {
-            for (key, value) in fields {
-                let key = key.extract::<String>()?;
-                let value = if matches!(key.as_str(), "points" | "vertices") {
-                    points(&value)?
-                } else {
-                    scalar(&value)?
-                };
-                changes.insert(key, value);
-            }
-        }
+        let changes = fields
+            .map(|fields| fields_from_dict(fields, false))
+            .transpose()?
+            .unwrap_or_default();
         self.document.add_feature(kind, &changes).map_err(error)
+    }
+    #[pyo3(signature = (name, entity_ids, placements))]
+    fn create_part(
+        &mut self,
+        name: &str,
+        entity_ids: Vec<i64>,
+        placements: &Bound<'_, PyAny>,
+    ) -> PyResult<Vec<i64>> {
+        let mut inputs = Vec::new();
+        for item in placements.iter()? {
+            let item = item?;
+            let item = item.downcast::<PyDict>()?;
+            for key in item.keys() {
+                let key = key.extract::<String>()?;
+                if !matches!(key.as_str(), "position" | "angle" | "scale" | "layer") {
+                    return Err(PyValueError::new_err(format!(
+                        "Unknown placement field {key}"
+                    )));
+                }
+            }
+            let position = item.get_item("position")?.ok_or_else(|| {
+                PyValueError::new_err("Each placement needs an explicit position")
+            })?;
+            let pair = |value: &Bound<'_, PyAny>| -> PyResult<Vec<Value>> {
+                if !value.is_instance_of::<PyList>() && !value.is_instance_of::<PyTuple>() {
+                    return Err(PyTypeError::new_err("Expected a coordinate pair"));
+                }
+                let values = value
+                    .iter()?
+                    .map(|v| real_number(&v?).map(number))
+                    .collect::<PyResult<Vec<_>>>()?;
+                if values.len() != 2 {
+                    return Err(PyValueError::new_err("Expected two coordinates"));
+                }
+                Ok(values)
+            };
+            let position = pair(&position)?;
+            let scale = item
+                .get_item("scale")?
+                .map(|v| pair(&v))
+                .transpose()?
+                .unwrap_or_else(|| vec![number(1.0), number(1.0)]);
+            let layer = match item.get_item("layer")?.map(|v| scalar(&v)).transpose()? {
+                None => string(1),
+                Some(Value::Integer(value)) => string(value),
+                _ => return Err(PyTypeError::new_err("layer must be an integer code")),
+            };
+            let angle = item
+                .get_item("angle")?
+                .map(|v| real_number(&v))
+                .transpose()?
+                .unwrap_or(0.0);
+            inputs.push(vec![
+                layer,
+                position[0].clone(),
+                position[1].clone(),
+                number(angle),
+                scale[0].clone(),
+                scale[1].clone(),
+            ]);
+        }
+        self.document
+            .create_part(name, &entity_ids, &inputs)
+            .map_err(error)
     }
     #[pyo3(signature = (name, entity_ids, *, kind=3, position=(0.0,0.0), angle=0.0, scale=(1.0,1.0), layer=0))]
     fn group_elements(
@@ -647,13 +790,16 @@ impl PythonSfcDocument {
 }
 
 #[pyfunction]
-#[pyo3(signature = (file_name="drawing.sfc", *, name="drawing", width_mm=297, height_mm=210, timestamp=None))]
+#[allow(clippy::too_many_arguments)] // Stable keyword-only Python constructor.
+#[pyo3(signature = (file_name="drawing.sfc", *, name="drawing", paper=None, orientation=None, width_mm=None, height_mm=None, timestamp=None))]
 fn new_sfc(
     py: Python<'_>,
     file_name: &str,
     name: &str,
-    width_mm: i64,
-    height_mm: i64,
+    paper: Option<&Bound<'_, PyAny>>,
+    orientation: Option<&Bound<'_, PyAny>>,
+    width_mm: Option<&Bound<'_, PyAny>>,
+    height_mm: Option<&Bound<'_, PyAny>>,
     timestamp: Option<String>,
 ) -> PyResult<PythonSfcDocument> {
     let timestamp = match timestamp {
@@ -666,8 +812,35 @@ fn new_sfc(
             .extract()?,
     };
     Ok(PythonSfcDocument {
-        document: SfcDocument::new(file_name, name, width_mm, height_mm, &timestamp)
-            .map_err(error)?,
+        document: SfcDocument::new_with_paper(
+            file_name,
+            name,
+            named_code(
+                paper,
+                &[
+                    ("A0", 0),
+                    ("A1", 1),
+                    ("A2", 2),
+                    ("A3", 3),
+                    ("A4", 4),
+                    ("FREE", 9),
+                ],
+                9,
+                "paper",
+            )?,
+            named_code(
+                orientation,
+                &[("portrait", 0), ("landscape", 1)],
+                1,
+                "orientation",
+            )?,
+            (
+                width_mm.map(real_number).transpose()?,
+                height_mm.map(real_number).transpose()?,
+            ),
+            &timestamp,
+        )
+        .map_err(error)?,
     })
 }
 #[pyfunction]
@@ -691,11 +864,17 @@ fn validate_saf(data: &[u8]) -> PyResult<()> {
     crate::saf::SafDocument::parse(data).map_err(error)?;
     Ok(())
 }
+#[pyfunction(name = "estimate_text_width")]
+#[pyo3(signature = (text, height=3.5, spacing=0.0))]
+fn python_estimate_text_width(text: &str, height: f64, spacing: f64) -> PyResult<f64> {
+    crate::authoring::estimate_text_width(text, height, spacing).map_err(error)
+}
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PythonSfcDocument>()?;
     module.add_function(wrap_pyfunction!(new_sfc, module)?)?;
     module.add_function(wrap_pyfunction!(edit_sfc, module)?)?;
     module.add_function(wrap_pyfunction!(edit_sfc_bundle, module)?)?;
     module.add_function(wrap_pyfunction!(validate_saf, module)?)?;
+    module.add_function(wrap_pyfunction!(python_estimate_text_width, module)?)?;
     Ok(())
 }
