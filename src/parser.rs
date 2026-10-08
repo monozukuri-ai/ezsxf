@@ -39,7 +39,7 @@ pub(crate) struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn new(input: &'a str, format: FileFormat, strict: bool) -> Self {
+    pub(crate) fn new(input: &'a str, format: FileFormat, strict: bool) -> Self {
         Self {
             input,
             chars: input.chars().collect(),

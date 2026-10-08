@@ -9,6 +9,7 @@ pub struct SfcDocument {
     pub(crate) output: ParseOutput,
     pub(crate) saf: Option<crate::saf::SafDocument>,
     pub(crate) dependencies: BTreeMap<String, Vec<u8>>,
+    pub(crate) target_p21: bool,
 }
 
 fn error(message: impl Into<String>) -> WriteError {
@@ -158,6 +159,7 @@ impl SfcDocument {
             output: validate(&document)?,
             saf: None,
             dependencies: BTreeMap::new(),
+            target_p21: false,
         })
     }
 
@@ -173,6 +175,7 @@ impl SfcDocument {
             output,
             saf: None,
             dependencies: BTreeMap::new(),
+            target_p21: false,
         })
     }
     pub fn snapshot(&self) -> &ParseOutput {
@@ -183,9 +186,17 @@ impl SfcDocument {
     }
     pub(crate) fn commit(&mut self, document: ParsedDocument) -> Result<(), WriteError> {
         let output = validate(&document)?;
+        if self.target_p21 {
+            if let Some((id, reason)) = crate::p21_writer::p21_issues(&output).first() {
+                return Err(error(format!("Entity #{id}: {reason}")));
+            }
+        }
         self.validate_image_links(&output)?;
         self.output = output;
         Ok(())
+    }
+    pub fn validate_p21(&self) -> Vec<(i64, String)> {
+        crate::p21_writer::p21_issues(&self.output)
     }
     pub(crate) fn next_id(&self) -> Result<i64, WriteError> {
         self.output

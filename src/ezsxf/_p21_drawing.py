@@ -34,6 +34,7 @@ from ezsxf._drawing_geometry import (
     sample_ellipse,
     transform_curve,
     without_duplicate_end,
+    sample_spline,
 )
 from ezsxf._drawing_style import _COLOR_NAMES
 
@@ -692,7 +693,7 @@ class P21DrawingBuilder:
             self.drawing.markers.append(
                 MarkerPrimitive(
                     position=apply(symbol_transform, (0.0, 0.0)),
-                    marker_code=1,
+                    marker_code={"asterisk": 1, "circle": 2, "dot": 3, "plus": 4, "square": 5, "triangle": 6, "x": 7}.get(name.lower(), 0),
                     scale=average_scale(symbol_transform),
                     style=style,
                     source_id=source_id,
@@ -938,6 +939,16 @@ class P21DrawingBuilder:
         trimmed = records.get("TRIMMED_CURVE")
         if trimmed is not None:
             geometry = self._trimmed_curve(trimmed, entity_id)
+
+        bezier = records.get("BEZIER_CURVE")
+        if bezier is not None:
+            params = bezier.get("parameters", [])
+            if len(params) >= 6 and int(params[1]) == 3:
+                controls = [self._point(i) for i in _references(params[2])]
+                points = sample_spline(controls, self.curve_segments)
+                if points is not None:
+                    closed = _enum_value(params[4]) == "T"
+                    geometry = [(without_duplicate_end(points) if closed else points, closed)]
 
         composite = records.get("COMPOSITE_CURVE")
         if composite is not None:

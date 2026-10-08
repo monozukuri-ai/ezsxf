@@ -389,20 +389,15 @@ impl Graph {
                 else {
                     unreachable!()
                 };
-                let Value::Reference(basis) = trimmed.parameters[1] else {
+                let Value::Reference(basis_id) = trimmed.parameters[1] else {
                     unreachable!()
                 };
-                let EntityBody::Simple(basis) = &self.entities[(basis - 1) as usize].body else {
+                let base = self.point(&extension.base);
+                let EntityBody::Simple(basis) = &mut self.entities[(basis_id - 1) as usize].body
+                else {
                     unreachable!()
                 };
-                let Value::Reference(base) = basis.parameters[1] else {
-                    unreachable!()
-                };
-                let EntityBody::Simple(base) = &mut self.entities[(base - 1) as usize].body else {
-                    unreachable!()
-                };
-                base.parameters[1] =
-                    Value::List(vec![real(extension.base.x), real(extension.base.y)]);
+                basis.parameters[1] = reference(base);
                 contents.push(projection);
             }
         }

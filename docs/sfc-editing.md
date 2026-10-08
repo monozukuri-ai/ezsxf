@@ -113,6 +113,12 @@ placements = doc.create_part("Symbol", [line, ellipse], [
 This consumes sheet components and creates the kind-4 definition and all explicit
 placements in one transaction. Each placement needs `position`; `angle`, `scale`
 and `layer` default to 0, `(1,1)` and 1. At least one placement is required.
+Both scale components must be finite and positive. Nonuniform positive scales
+are allowed. Zero/negative scales fail directly: SXF cannot represent mirrored
+placements; mirror the definition geometry instead. This applies to
+`create_part`, `place_part`, `group_elements` and structured `extend` placements.
+For many parts/fills, use [one structured batch](bulk-writing.md) rather than
+repeated operations that each validate the complete document.
 Rendering starts from `model.sheet.component_ids`, following definition references;
 `typed_features` includes local definition geometry and is not a list of sheet
 rendering roots. `group_elements(kind=4)` continues to create a first placement

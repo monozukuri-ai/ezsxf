@@ -26,7 +26,7 @@ fn style(layer: i64, color: i64, line_type: i64, line_width: i64) -> Vec<Value> 
         string(line_width),
     ]
 }
-fn scalar(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+pub(crate) fn scalar(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     if value.is_instance_of::<PyBool>() {
         return Err(PyTypeError::new_err("Boolean is not an editing parameter"));
     }
@@ -40,14 +40,14 @@ fn scalar(value: &Bound<'_, PyAny>) -> PyResult<Value> {
         Err(PyTypeError::new_err("Expected an integer, float or string"))
     }
 }
-fn real_number(value: &Bound<'_, PyAny>) -> PyResult<f64> {
+pub(crate) fn real_number(value: &Bound<'_, PyAny>) -> PyResult<f64> {
     match scalar(value)? {
         Value::Integer(value) => Ok(value as f64),
         Value::Real(value) => Ok(value),
         _ => Err(PyTypeError::new_err("Expected an integer or float")),
     }
 }
-fn points(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+pub(crate) fn points(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     if !value.is_instance_of::<PyList>() && !value.is_instance_of::<PyTuple>() {
         return Err(PyTypeError::new_err("points must be a list or tuple"));
     }
@@ -68,7 +68,7 @@ fn points(value: &Bound<'_, PyAny>) -> PyResult<Value> {
         .map(Value::List)
 }
 
-fn fields_from_dict(
+pub(crate) fn fields_from_dict(
     fields: &Bound<'_, PyDict>,
     skip_kind: bool,
 ) -> PyResult<BTreeMap<String, Value>> {
@@ -130,9 +130,22 @@ struct PythonSfcDocument {
 #[pymethods]
 #[allow(clippy::too_many_arguments)]
 impl PythonSfcDocument {
-    fn to_p21_bytes(&self, py: Python<'_>) -> PyResult<Py<PyBytes>> {
-        let bytes = crate::p21_writer::serialize_p21(self.document.snapshot()).map_err(error)?;
-        Ok(PyBytes::new_bound(py, &bytes).unbind())
+    #[pyo3(signature = (*, unsupported="raise", report=false))]
+    fn to_p21_bytes(&self, py: Python<'_>, unsupported: &str, report: bool) -> PyResult<PyObject> {
+        if !matches!(unsupported, "raise" | "drop") {
+            return Err(PyValueError::new_err("unsupported must be raise or drop"));
+        }
+        let (bytes, dropped) = crate::p21_writer::serialize_p21_report(
+            self.document.snapshot(),
+            unsupported == "drop",
+        )
+        .map_err(error)?;
+        let bytes = PyBytes::new_bound(py, &bytes).unbind();
+        if report {
+            Ok((bytes, dropped).into_py(py))
+        } else {
+            Ok(bytes.into_py(py))
+        }
     }
     fn save_p21(&self, path: &Bound<'_, PyAny>) -> PyResult<()> {
         let bytes = crate::p21_writer::serialize_p21(self.document.snapshot()).map_err(error)?;
@@ -164,20 +177,54 @@ impl PythonSfcDocument {
             .save_p2z(&crate::python_writer::fspath(path)?)
             .map_err(io_error)
     }
-    fn extend(&mut self, elements: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
+    #[pyo3(signature = (elements, *, on_invalid="raise", into=None))]
+    fn extend(
+        &mut self,
+        elements: &Bound<'_, PyAny>,
+        on_invalid: &str,
+        into: Option<i64>,
+    ) -> PyResult<PyObject> {
+        if !matches!(on_invalid, "raise" | "skip") {
+            return Err(PyValueError::new_err("on_invalid must be raise or skip"));
+        }
         let mut inputs = Vec::new();
         for (index, item) in elements.iter()?.enumerate() {
-            let item = item?;
-            let item = item
-                .downcast::<PyDict>()
-                .map_err(|_| PyTypeError::new_err(format!("Element {index} must be a dict")))?;
-            let kind = item
-                .get_item("kind")?
-                .ok_or_else(|| PyValueError::new_err(format!("Element {index} needs kind")))?
-                .extract::<String>()?;
-            inputs.push((kind, fields_from_dict(item, true)?));
+            let item = item.map_err(|e| {
+                PyErr::from_type_bound(
+                    e.get_type_bound(elements.py()),
+                    format!("Element {index}: {e}"),
+                )
+            })?;
+            let parsed = crate::python_bulk::element(&item, 0).map_err(|e| e.to_string());
+            if on_invalid == "raise" {
+                if let Err(reason) = &parsed {
+                    return Err(PyValueError::new_err(format!("Element {index}: {reason}")));
+                }
+            }
+            inputs.push(parsed);
         }
-        self.document.extend(&inputs).map_err(error)
+        let report = self
+            .document
+            .extend_structured(&inputs, on_invalid == "skip", into)
+            .map_err(error)?;
+        let py = elements.py();
+        let ids: Vec<PyObject> = report
+            .ids
+            .into_iter()
+            .map(|id| match id {
+                None => py.None(),
+                Some(crate::bulk_editor::BatchId::Single(id)) => id.into_py(py),
+                Some(crate::bulk_editor::BatchId::Placements(ids)) => ids.into_py(py),
+            })
+            .collect();
+        if on_invalid == "skip" {
+            Ok((ids, report.rejected).into_py(py))
+        } else {
+            Ok(ids.into_py(py))
+        }
+    }
+    fn validate_p21(&self) -> Vec<(i64, String)> {
+        self.document.validate_p21()
     }
     fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         crate::python::output_to_python(py, self.document.snapshot())
@@ -824,7 +871,7 @@ impl PythonSfcDocument {
 
 #[pyfunction]
 #[allow(clippy::too_many_arguments)] // Stable keyword-only Python constructor.
-#[pyo3(signature = (file_name="drawing.sfc", *, name="drawing", paper=None, orientation=None, width_mm=None, height_mm=None, timestamp=None))]
+#[pyo3(signature = (file_name="drawing.sfc", *, name="drawing", paper=None, orientation=None, width_mm=None, height_mm=None, timestamp=None, target="sfc"))]
 fn new_sfc(
     py: Python<'_>,
     file_name: &str,
@@ -834,7 +881,11 @@ fn new_sfc(
     width_mm: Option<&Bound<'_, PyAny>>,
     height_mm: Option<&Bound<'_, PyAny>>,
     timestamp: Option<String>,
+    target: &str,
 ) -> PyResult<PythonSfcDocument> {
+    if !matches!(target, "sfc" | "p21") {
+        return Err(PyValueError::new_err("target must be sfc or p21"));
+    }
     let timestamp = match timestamp {
         Some(s) => s,
         None => py
@@ -844,7 +895,7 @@ fn new_sfc(
             .call_method0("isoformat")?
             .extract()?,
     };
-    Ok(PythonSfcDocument {
+    let mut result = PythonSfcDocument {
         document: SfcDocument::new_with_paper(
             file_name,
             name,
@@ -874,7 +925,9 @@ fn new_sfc(
             &timestamp,
         )
         .map_err(error)?,
-    })
+    };
+    result.document.target_p21 = target == "p21";
+    Ok(result)
 }
 #[pyfunction]
 fn edit_sfc(parsed: &Bound<'_, PyDict>) -> PyResult<PythonSfcDocument> {

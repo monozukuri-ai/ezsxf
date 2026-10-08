@@ -4,6 +4,7 @@
 
 mod attributes;
 mod authoring;
+mod bulk_editor;
 mod bundle;
 mod complex_editor;
 mod document;
@@ -15,6 +16,7 @@ mod p21_bundle;
 mod p21_writer;
 mod parser;
 mod python;
+mod python_bulk;
 mod python_editor;
 mod python_writer;
 mod saf;

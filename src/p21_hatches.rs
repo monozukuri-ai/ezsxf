@@ -242,7 +242,7 @@ impl Graph {
     }
 }
 
-fn boundary_points(
+pub(super) fn boundary_points(
     id: i64,
     model: &SfcModel,
     by_id: &BTreeMap<i64, &TypedFeature>,
@@ -252,9 +252,15 @@ fn boundary_points(
         .iter()
         .find(|d| d.entity_id == id)
         .unwrap();
+    boundary_features(definition.component_ids.iter().map(|id| by_id[id]))
+}
+
+pub(super) fn boundary_features<'a>(
+    features: impl Iterator<Item = &'a TypedFeature>,
+) -> Result<Vec<Point2>, WriteError> {
     let mut result: Vec<Point2> = Vec::new();
-    for id in &definition.component_ids {
-        let points = match by_id[id] {
+    for feature in features {
+        let points = match feature {
             TypedFeature::Line(v) => vec![v.start.clone(), v.end.clone()],
             TypedFeature::Polyline(v) => v.points.clone(),
             TypedFeature::Circle(v) => sampled(&v.center, v.radius, v.radius, 0.0, 0.0, 360.0, 0),
@@ -285,6 +291,27 @@ fn boundary_points(
                 v.end_angle_deg,
                 v.direction_flag,
             ),
+            TypedFeature::Spline(v) => {
+                if v.points.len() < 4 || (v.points.len() - 1) % 3 != 0 {
+                    return Err(error("P21 cubic spline needs 3n+1 control points"));
+                }
+                let mut samples = Vec::new();
+                for controls in v.points.windows(4).step_by(3) {
+                    for i in 0..=16 {
+                        if !samples.is_empty() && i == 0 {
+                            continue;
+                        }
+                        let t = i as f64 / 16.0;
+                        let u = 1.0 - t;
+                        let weights = [u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t];
+                        samples.push(Point2 {
+                            x: controls.iter().zip(weights).map(|(p, w)| p.x * w).sum(),
+                            y: controls.iter().zip(weights).map(|(p, w)| p.y * w).sum(),
+                        });
+                    }
+                }
+                samples
+            }
             _ => return Err(error("Unsupported fill boundary geometry")),
         };
         if let Some(previous) = result.last() {
@@ -342,7 +369,7 @@ fn sampled(
         })
         .collect()
 }
-fn interior_point(polygons: &[Vec<Point2>]) -> Result<Point2, WriteError> {
+pub(super) fn interior_point(polygons: &[Vec<Point2>]) -> Result<Point2, WriteError> {
     let mut ys: Vec<_> = polygons.iter().flatten().map(|p| p.y).collect();
     ys.sort_by(f64::total_cmp);
     ys.dedup();

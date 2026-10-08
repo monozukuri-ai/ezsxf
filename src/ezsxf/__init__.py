@@ -25,6 +25,7 @@ from ezsxf._core import (
     validate_saf,
 )
 from ezsxf._dxf import to_dxf
+from ezsxf._drawing import build_drawing
 from ezsxf._plot import plot
 
 try:
@@ -266,6 +267,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 __all__ = [
+    "build_drawing",
     "SfcDocument",
     "__version__",
     "edit_sfc",

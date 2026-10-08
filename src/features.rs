@@ -1186,8 +1186,7 @@ pub(crate) fn validate_typed_feature_values(feature: &TypedFeature) -> Result<()
             validate_sfc_semantic_string(&value.name, "sfig name", false)?;
             validate_point(&value.position, "sfig position")?;
             validate_angle(value.angle_deg, "sfig rotation angle")?;
-            validate_positive(value.ratio_x, "sfig X scale")?;
-            validate_positive(value.ratio_y, "sfig Y scale")?;
+            validate_placement_scale(value.ratio_x, value.ratio_y)?;
         }
         TypedFeature::ExternallyDefinedSymbol(value) => {
             validate_style(&value.style)?;
@@ -1398,6 +1397,14 @@ pub(crate) fn validate_positive(value: f64, name: &str) -> Result<(), String> {
         value.is_finite() && value > 0.0 && value < SFC_UPPER_BOUND,
         format!("{name} must be greater than 0 and less than 1.0e15"),
     )
+}
+
+pub(crate) fn validate_placement_scale(x: f64, y: f64) -> Result<(), String> {
+    if !x.is_finite() || !y.is_finite() || x <= 0.0 || y <= 0.0 {
+        return Err("placement scale must be finite and positive; SXF cannot represent mirrored placements; mirror the definition geometry instead".into());
+    }
+    validate_positive(x, "placement X scale")?;
+    validate_positive(y, "placement Y scale")
 }
 
 pub(crate) fn validate_nonnegative(value: f64, name: &str) -> Result<(), String> {

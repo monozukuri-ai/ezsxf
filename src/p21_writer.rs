@@ -11,6 +11,44 @@ use std::fmt::Write;
 mod annotations;
 #[path = "p21_hatches.rs"]
 mod hatches;
+#[path = "p21_validation.rs"]
+mod validation;
+pub(crate) use validation::{feature_reason as p21_feature_reason, issues as p21_issues};
+
+pub(crate) fn check_fill_boundaries(
+    output: &ParseOutput,
+    outer: i64,
+    holes: &[i64],
+) -> Result<(), WriteError> {
+    let model = output.document.sfc_model.as_ref().unwrap();
+    let by_id: BTreeMap<_, _> = output
+        .document
+        .typed_features
+        .iter()
+        .map(|f| (f.id, &f.feature))
+        .collect();
+    let polygons = std::iter::once(outer)
+        .chain(holes.iter().copied())
+        .map(|id| {
+            if !model
+                .composite_curve_definitions
+                .iter()
+                .any(|d| d.entity_id == id)
+            {
+                return Err(error(format!("Unknown composite-curve entity #{id}")));
+            }
+            hatches::boundary_points(id, model, &by_id)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    hatches::interior_point(&polygons).map(|_| ())
+}
+
+pub(crate) fn check_inline_boundary(features: &[TypedFeature]) -> Result<Vec<Point2>, WriteError> {
+    hatches::boundary_features(features.iter())
+}
+pub(crate) fn check_inline_fill(polygons: &[Vec<Point2>]) -> Result<(), WriteError> {
+    hatches::interior_point(polygons).map(|_| ())
+}
 
 fn error(message: impl Into<String>) -> WriteError {
     WriteError(message.into())
@@ -49,6 +87,7 @@ struct Graph {
     context: i64,
     length_unit: i64,
     source: i64,
+    points: BTreeMap<(u64, u64), i64>,
 }
 
 impl Graph {
@@ -95,10 +134,17 @@ impl Graph {
         self.push(EntityBody::Complex(records))
     }
     fn point(&mut self, p: &Point2) -> i64 {
-        self.add(
+        let bits = |v: f64| if v == 0.0 { 0 } else { v.to_bits() };
+        let key = (bits(p.x), bits(p.y));
+        if let Some(id) = self.points.get(&key) {
+            return *id;
+        }
+        let id = self.add(
             "CARTESIAN_POINT",
             vec![string(""), Value::List(vec![real(p.x), real(p.y)])],
-        )
+        );
+        self.points.insert(key, id);
+        id
     }
     fn axis(&mut self, p: &Point2, angle_deg: f64) -> i64 {
         let point = self.point(p);
@@ -178,10 +224,9 @@ impl Graph {
                     ],
                 );
                 let vector = self.add("VECTOR", vec![string(""), reference(direction), real(1.0)]);
-                let origin = self.point(&Point2 { x: 0.0, y: 0.0 });
                 let basis = self.add(
                     "LINE",
-                    vec![string(""), reference(origin), reference(vector)],
+                    vec![string(""), reference(start), reference(vector)],
                 );
                 self.add(
                     "TRIMMED_CURVE",
@@ -198,6 +243,52 @@ impl Graph {
             TypedFeature::Polyline(line) => {
                 let points: Vec<_> = line.points.iter().map(|point| self.point(point)).collect();
                 self.add("POLYLINE", vec![string(""), references(&points)])
+            }
+            TypedFeature::Spline(spline) => {
+                if spline.points.len() < 4 || (spline.points.len() - 1) % 3 != 0 {
+                    return Err(error(
+                        "P21 cubic spline needs 3n+1 control points (at least four)",
+                    ));
+                }
+                let mut segments = Vec::new();
+                let multiple = spline.points.len() > 4;
+                for (index, controls) in spline.points.windows(4).step_by(3).enumerate() {
+                    let points: Vec<_> = controls.iter().map(|p| self.point(p)).collect();
+                    let bezier = self.add(
+                        "BEZIER_CURVE",
+                        vec![
+                            string(""),
+                            Value::Integer(3),
+                            references(&points),
+                            enumeration("UNSPECIFIED"),
+                            enumeration(if !multiple && spline.open_close == 0 {
+                                "T"
+                            } else {
+                                "F"
+                            }),
+                            enumeration("U"),
+                        ],
+                    );
+                    if !multiple {
+                        return Ok(bezier);
+                    }
+                    segments.push(self.add(
+                        "COMPOSITE_CURVE_SEGMENT",
+                        vec![
+                            enumeration(if index == 0 && spline.open_close == 1 {
+                                "DISCONTINUOUS"
+                            } else {
+                                "CONTINUOUS"
+                            }),
+                            enumeration("T"),
+                            reference(bezier),
+                        ],
+                    ));
+                }
+                self.add(
+                    "COMPOSITE_CURVE",
+                    vec![string(""), references(&segments), enumeration("U")],
+                )
             }
             TypedFeature::Circle(circle) => {
                 let axis = self.axis(&circle.center, 0.0);
@@ -355,6 +446,24 @@ pub(crate) fn serialize_p21_with_dependencies(
     allow_external_references: bool,
     file_name: Option<&str>,
 ) -> Result<Vec<u8>, WriteError> {
+    generate(output, allow_external_references, file_name, false).map(|r| r.0)
+}
+
+type P21Export = (Vec<u8>, Vec<(i64, String)>);
+
+pub(crate) fn serialize_p21_report(
+    output: &ParseOutput,
+    drop_unsupported: bool,
+) -> Result<P21Export, WriteError> {
+    generate(output, false, None, drop_unsupported)
+}
+
+fn generate(
+    output: &ParseOutput,
+    allow_external_references: bool,
+    file_name: Option<&str>,
+    drop_unsupported: bool,
+) -> Result<P21Export, WriteError> {
     serialize_sfc(
         output,
         SfcWriteOptions {
@@ -362,6 +471,17 @@ pub(crate) fn serialize_p21_with_dependencies(
             ..SfcWriteOptions::default()
         },
     )?;
+    let dropped = if drop_unsupported {
+        validation::dropped(output)
+    } else {
+        BTreeMap::new()
+    };
+    if let Some((id, reason)) = p21_issues(output)
+        .iter()
+        .find(|(id, _)| !dropped.contains_key(id))
+    {
+        return Err(error(format!("Entity #{id}: {reason}")));
+    }
     let document = &output.document;
     let model = document
         .sfc_model
@@ -371,6 +491,9 @@ pub(crate) fn serialize_p21_with_dependencies(
         return Err(error("P21 has external dependencies; use save_p21_bundle or save_p2z"));
     }
     for feature in &document.typed_features {
+        if dropped.contains_key(&feature.id) {
+            continue;
+        }
         if let TypedFeature::DrawingAttribute(title) = &feature.feature {
             let year = title.drawing_year;
             let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
@@ -405,6 +528,8 @@ pub(crate) fn serialize_p21_with_dependencies(
                 | TypedFeature::Circle(_)
                 | TypedFeature::Arc(_)
                 | TypedFeature::Polyline(_)
+                | TypedFeature::Spline(_)
+                | TypedFeature::PointMarker(_)
                 | TypedFeature::Ellipse(_)
                 | TypedFeature::EllipseArc(_)
                 | TypedFeature::Text(_)
@@ -640,124 +765,150 @@ pub(crate) fn serialize_p21_with_dependencies(
         .collect();
     for feature in &document.typed_features {
         let source_id = feature.id;
-        let item = match &feature.feature {
-            feature @ (TypedFeature::Line(_)
-            | TypedFeature::Circle(_)
-            | TypedFeature::Arc(_)
-            | TypedFeature::Polyline(_)
-            | TypedFeature::Ellipse(_)
-            | TypedFeature::EllipseArc(_)) => {
-                let style = feature.style().unwrap();
-                let assignment = graph.curve_style(style)?;
-                let geometry = graph.curve(feature)?;
-                graph.curves.insert(source_id, geometry);
-                Some(graph.occurrence(
-                    "ANNOTATION_CURVE_OCCURRENCE",
-                    "",
-                    geometry,
-                    assignment,
-                    style.layer_code.unwrap_or(0),
-                ))
-            }
-            TypedFeature::Text(text) => Some(graph.text(text)?),
-            feature @ (TypedFeature::LinearDim(_)
-            | TypedFeature::CurveDim(_)
-            | TypedFeature::AngularDim(_)
-            | TypedFeature::RadiusDim(_)
-            | TypedFeature::DiameterDim(_)
-            | TypedFeature::Label(_)
-            | TypedFeature::Balloon(_)) => Some(graph.dimension(feature)?),
-            TypedFeature::CompositeCurve(curve) => Some(graph.composite(feature.id, curve, model)?),
-            fill @ (TypedFeature::ExternallyDefinedHatch(_)
-            | TypedFeature::FillAreaStyleColour(_)
-            | TypedFeature::FillAreaStyleHatching(_)
-            | TypedFeature::FillAreaStyleTiles(_)) => Some(graph.fill(fill, model, &by_id)?),
-            TypedFeature::ExternallyDefinedSymbol(symbol) => Some(graph.external_symbol(symbol)?),
-            TypedFeature::SfigOrg(_) => {
-                let definition = &definitions[&feature.id];
-                let mut components = definition
-                    .component_ids
-                    .iter()
-                    .map(|id| lookup(&graph.items, *id, "component"))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let axis = graph.axis(&Point2 { x: 0.0, y: 0.0 }, 0.0);
-                components.push(axis);
-                let prefix = match definition.kind_flag {
-                    1 => "FM",
-                    2 => "FG",
-                    3 => "G",
-                    4 => "P",
-                    _ => unreachable!(),
-                };
-                let name = format!("$$SXF_{prefix}_{}", definition.name);
-                // The original feature name already passed the SFC byte limit.
-                // AP202 adds an identifier prefix outside that feature name.
-                let representation = graph.add(
-                    "DRAUGHTING_SUBFIGURE_REPRESENTATION",
-                    vec![
-                        string(name),
-                        references(&components),
-                        reference(graph.context),
-                    ],
-                );
-                let map = graph.add(
-                    "SYMBOL_REPRESENTATION_MAP",
-                    vec![reference(axis), reference(representation)],
-                );
-                graph.maps.insert(feature.id, map);
-                None
-            }
-            TypedFeature::SfigLocate(placement) => {
-                let definition_id = targets[&feature.id];
-                let map = lookup(&graph.maps, definition_id, "subfigure")?;
-                let definition = &definitions[&definition_id];
-                // Geodetic partial drawings exchange X and Y local axes (Feature
-                // Specification §2-3); rejected until the reader shares that rule.
-                if definition.kind_flag == 2 {
-                    return Err(error(format!(
-                        "P21 geodetic partial drawing #{} is not supported",
-                        definition_id
-                    )));
+        if dropped.contains_key(&source_id) {
+            continue;
+        }
+        let item = (|| -> Result<Option<i64>, WriteError> {
+            Ok(match &feature.feature {
+                feature @ (TypedFeature::Line(_)
+                | TypedFeature::Circle(_)
+                | TypedFeature::Arc(_)
+                | TypedFeature::Polyline(_)
+                | TypedFeature::Spline(_)
+                | TypedFeature::Ellipse(_)
+                | TypedFeature::EllipseArc(_)) => {
+                    let style = feature.style().unwrap();
+                    let assignment = graph.curve_style(style)?;
+                    let geometry = graph.curve(feature)?;
+                    graph.curves.insert(source_id, geometry);
+                    Some(graph.occurrence(
+                        "ANNOTATION_CURVE_OCCURRENCE",
+                        "",
+                        geometry,
+                        assignment,
+                        style.layer_code.unwrap_or(0),
+                    ))
                 }
-                let axis = graph.axis(&placement.position, placement.angle_deg);
-                let target = graph.add(
-                    "SYMBOL_TARGET",
-                    vec![
-                        string(""),
-                        reference(axis),
-                        real(placement.ratio_x),
-                        real(placement.ratio_y),
-                    ],
-                );
-                let mapped = graph.complex(vec![
-                    record("ANNOTATION_SYMBOL", vec![]),
-                    record("GEOMETRIC_REPRESENTATION_ITEM", vec![]),
-                    record("MAPPED_ITEM", vec![reference(map), reference(target)]),
-                    record("REPRESENTATION_ITEM", vec![string("")]),
-                ]);
-                let assignment = graph.add(
-                    "PRESENTATION_STYLE_ASSIGNMENT",
-                    vec![Value::List(vec![Value::Typed {
-                        keyword: "NULL_STYLE".into(),
-                        parameters: vec![enumeration("NULL")],
-                    }])],
-                );
-                let prefix = match definition.kind_flag {
-                    1 => "FM",
-                    3 => "G",
-                    4 => "P",
-                    _ => unreachable!(),
-                };
-                Some(graph.occurrence(
-                    "ANNOTATION_SUBFIGURE_OCCURRENCE",
-                    &format!("$$SXF_{prefix}_{}", definition.name),
-                    mapped,
-                    assignment,
-                    placement.style.layer_code.unwrap_or(0),
-                ))
-            }
-            _ => None,
-        };
+                TypedFeature::Text(text) => Some(graph.text(text)?),
+                TypedFeature::PointMarker(marker) => {
+                    let name = [
+                        "asterisk", "circle", "dot", "plus", "square", "triangle", "x",
+                    ][(marker.marker_code - 1) as usize];
+                    let definition =
+                        graph.add("PRE_DEFINED_POINT_MARKER_SYMBOL", vec![string(name)]);
+                    Some(graph.symbol(
+                        definition,
+                        &marker.position,
+                        marker.rotation_angle_deg,
+                        (marker.scale, marker.scale),
+                        &marker.style,
+                    )?)
+                }
+                feature @ (TypedFeature::LinearDim(_)
+                | TypedFeature::CurveDim(_)
+                | TypedFeature::AngularDim(_)
+                | TypedFeature::RadiusDim(_)
+                | TypedFeature::DiameterDim(_)
+                | TypedFeature::Label(_)
+                | TypedFeature::Balloon(_)) => Some(graph.dimension(feature)?),
+                TypedFeature::CompositeCurve(curve) => {
+                    Some(graph.composite(feature.id, curve, model)?)
+                }
+                fill @ (TypedFeature::ExternallyDefinedHatch(_)
+                | TypedFeature::FillAreaStyleColour(_)
+                | TypedFeature::FillAreaStyleHatching(_)
+                | TypedFeature::FillAreaStyleTiles(_)) => Some(graph.fill(fill, model, &by_id)?),
+                TypedFeature::ExternallyDefinedSymbol(symbol) => {
+                    Some(graph.external_symbol(symbol)?)
+                }
+                TypedFeature::SfigOrg(_) => {
+                    let definition = &definitions[&feature.id];
+                    let mut components = definition
+                        .component_ids
+                        .iter()
+                        .filter(|id| !dropped.contains_key(id))
+                        .map(|id| lookup(&graph.items, *id, "component"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let axis = graph.axis(&Point2 { x: 0.0, y: 0.0 }, 0.0);
+                    components.push(axis);
+                    let prefix = match definition.kind_flag {
+                        1 => "FM",
+                        2 => "FG",
+                        3 => "G",
+                        4 => "P",
+                        _ => unreachable!(),
+                    };
+                    let name = format!("$$SXF_{prefix}_{}", definition.name);
+                    // The original feature name already passed the SFC byte limit.
+                    // AP202 adds an identifier prefix outside that feature name.
+                    let representation = graph.add(
+                        "DRAUGHTING_SUBFIGURE_REPRESENTATION",
+                        vec![
+                            string(name),
+                            references(&components),
+                            reference(graph.context),
+                        ],
+                    );
+                    let map = graph.add(
+                        "SYMBOL_REPRESENTATION_MAP",
+                        vec![reference(axis), reference(representation)],
+                    );
+                    graph.maps.insert(feature.id, map);
+                    None
+                }
+                TypedFeature::SfigLocate(placement) => {
+                    let definition_id = targets[&feature.id];
+                    let map = lookup(&graph.maps, definition_id, "subfigure")?;
+                    let definition = &definitions[&definition_id];
+                    // Geodetic partial drawings exchange X and Y local axes (Feature
+                    // Specification §2-3); rejected until the reader shares that rule.
+                    if definition.kind_flag == 2 {
+                        return Err(error(format!(
+                            "P21 geodetic partial drawing #{} is not supported",
+                            definition_id
+                        )));
+                    }
+                    let axis = graph.axis(&placement.position, placement.angle_deg);
+                    let target = graph.add(
+                        "SYMBOL_TARGET",
+                        vec![
+                            string(""),
+                            reference(axis),
+                            real(placement.ratio_x),
+                            real(placement.ratio_y),
+                        ],
+                    );
+                    let mapped = graph.complex(vec![
+                        record("ANNOTATION_SYMBOL", vec![]),
+                        record("GEOMETRIC_REPRESENTATION_ITEM", vec![]),
+                        record("MAPPED_ITEM", vec![reference(map), reference(target)]),
+                        record("REPRESENTATION_ITEM", vec![string("")]),
+                    ]);
+                    let assignment = graph.add(
+                        "PRESENTATION_STYLE_ASSIGNMENT",
+                        vec![Value::List(vec![Value::Typed {
+                            keyword: "NULL_STYLE".into(),
+                            parameters: vec![enumeration("NULL")],
+                        }])],
+                    );
+                    let prefix = match definition.kind_flag {
+                        1 => "FM",
+                        3 => "G",
+                        4 => "P",
+                        _ => unreachable!(),
+                    };
+                    Some(graph.occurrence(
+                        "ANNOTATION_SUBFIGURE_OCCURRENCE",
+                        &format!("$$SXF_{prefix}_{}", definition.name),
+                        mapped,
+                        assignment,
+                        placement.style.layer_code.unwrap_or(0),
+                    ))
+                }
+                _ => None,
+            })
+        })()
+        .map_err(|e| error(format!("Entity #{source_id}: {e}")))?;
         if let Some(item) = item {
             graph.items.insert(feature.id, item);
         }
@@ -801,6 +952,7 @@ pub(crate) fn serialize_p21_with_dependencies(
     let mut sheet_items = sheet_model
         .component_ids
         .iter()
+        .filter(|id| !dropped.contains_key(id))
         .map(|id| lookup(&graph.items, *id, "sheet item"))
         .collect::<Result<Vec<_>, _>>()?;
     sheet_items.push(box_id);
@@ -887,7 +1039,12 @@ pub(crate) fn serialize_p21_with_dependencies(
             record.parameters[0] = string(filename);
         }
     }
-    encode_graph(header, graph.entities)
+    let report = document
+        .typed_features
+        .iter()
+        .filter_map(|f| dropped.get(&f.id).map(|reason| (f.id, reason.clone())))
+        .collect();
+    Ok((encode_graph(header, graph.entities)?, report))
 }
 
 fn step_string(value: &str) -> Result<String, WriteError> {
@@ -989,9 +1146,9 @@ mod tests {
     fn unsupported_features_fail_explicitly() {
         let mut doc =
             crate::SfcDocument::new("drawing.sfc", "drawing", 297, 210, "2026-10-07").unwrap();
-        let id = doc.add_feature("spline", &BTreeMap::new()).unwrap();
+        let id = doc.add_feature("clothoid", &BTreeMap::new()).unwrap();
         let message = serialize_p21(doc.snapshot()).unwrap_err().to_string();
-        assert!(message.contains(&format!("#{id} spline_feature")));
+        assert!(message.contains(&format!("#{id}:")) && message.contains("clothoid_feature"));
     }
     #[test]
     fn attributes_are_resolved_as_groups_without_sfig_references() {

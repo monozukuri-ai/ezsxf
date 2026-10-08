@@ -8,6 +8,19 @@ fn error(message: impl Into<String>) -> WriteError {
     WriteError(message.into())
 }
 
+fn validate_placement(placement: &[Value]) -> Result<(), WriteError> {
+    if placement.len() != 6 {
+        return Err(error(
+            "A placement requires layer, x, y, angle, scale_x and scale_y",
+        ));
+    }
+    let x =
+        crate::features::parse_required_f64(&placement[4], "placement X scale").unwrap_or(f64::NAN);
+    let y =
+        crate::features::parse_required_f64(&placement[5], "placement Y scale").unwrap_or(f64::NAN);
+    crate::features::validate_placement_scale(x, y).map_err(error)
+}
+
 pub(crate) fn feature_keyword(kind: &str) -> Option<&'static str> {
     Some(match kind {
         "point_marker" | "point_marker_feature" => "point_marker_feature",
@@ -216,45 +229,20 @@ impl SfcDocument {
         &mut self,
         elements: &[(String, BTreeMap<String, Value>)],
     ) -> Result<Vec<i64>, WriteError> {
-        let records = elements
+        let elements = elements
             .iter()
-            .enumerate()
-            .map(|(index, (kind, fields))| {
-                authored_record(kind, fields).map_err(|e| error(format!("Element {index}: {e}")))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        if records.is_empty() {
-            return Ok(Vec::new());
-        }
-        let first = self.next_id()?;
-        let count = i64::try_from(records.len()).map_err(|_| error("Too many elements"))?;
-        first
-            .checked_add(count - 1)
-            .ok_or_else(|| error("Entity ID overflow"))?;
-        let sheet = self
-            .output
-            .document
-            .sfc_model
-            .as_ref()
-            .unwrap()
-            .sheet
-            .as_ref()
-            .unwrap()
-            .entity_id;
-        let mut document = self.output.document.clone();
-        let index = document
-            .entities
-            .iter()
-            .position(|e| e.id == sheet)
-            .unwrap();
-        let ids: Vec<_> = (0..count).map(|offset| first + offset).collect();
-        let entities = records
+            .cloned()
+            .map(|leaf| Ok(crate::bulk_editor::BatchElement::Feature(leaf)))
+            .collect::<Vec<_>>();
+        Ok(self
+            .extend_structured(&elements, false, None)?
+            .ids
             .into_iter()
-            .zip(&ids)
-            .map(|(r, id)| instance(*id, r));
-        document.entities.splice(index..index, entities);
-        self.commit(document)?;
-        Ok(ids)
+            .map(|id| match id {
+                Some(crate::bulk_editor::BatchId::Single(id)) => id,
+                _ => unreachable!("Leaf input always returns one ID"),
+            })
+            .collect())
     }
     pub(crate) fn add_authored_record(&mut self, r: Record) -> Result<i64, WriteError> {
         let id = self.next_id()?;
@@ -371,6 +359,7 @@ impl SfcDocument {
         kind: i64,
         placement: &[Value],
     ) -> Result<i64, WriteError> {
+        validate_placement(placement)?;
         if placement.len() != 6 {
             return Err(error(
                 "A placement requires layer, x, y, angle, scale_x and scale_y",
@@ -418,6 +407,7 @@ impl SfcDocument {
         let mut instances = Vec::new();
         let mut placement_ids = Vec::new();
         for (index, placement) in placements.iter().enumerate() {
+            validate_placement(placement).map_err(|e| error(format!("Placement {index}: {e}")))?;
             if placement.len() != 6 {
                 return Err(error("Invalid placement fields"));
             }
@@ -516,6 +506,7 @@ impl SfcDocument {
         placement_id: i64,
         placement: &[Value],
     ) -> Result<i64, WriteError> {
+        validate_placement(placement)?;
         if placement.len() != 6 {
             return Err(error("Invalid placement fields"));
         }
@@ -618,6 +609,8 @@ impl SfcDocument {
         layer: i64,
         color: i64,
     ) -> Result<i64, WriteError> {
+        crate::p21_writer::check_fill_boundaries(&self.output, outer, holes)
+            .map_err(|e| error(format!("Entity #{}: {e}", self.next_id().unwrap_or(0))))?;
         let (outer, holes) = self.curve_codes(outer, holes)?;
         self.add_authored_record(record(
             "fill_area_style_colour_feature",
@@ -708,6 +701,8 @@ impl SfcDocument {
         layer: i64,
         patterns: &[Vec<Value>],
     ) -> Result<i64, WriteError> {
+        crate::p21_writer::check_fill_boundaries(&self.output, outer, holes)
+            .map_err(|e| error(format!("Entity #{}: {e}", self.next_id().unwrap_or(0))))?;
         let (outer, holes) = self.curve_codes(outer, holes)?;
         let mut p = vec![string(layer), string(patterns.len())];
         for pattern in patterns {

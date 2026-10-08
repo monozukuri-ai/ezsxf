@@ -242,6 +242,27 @@ pub(crate) fn encode_document(
     Ok((bytes.into_owned(), validated))
 }
 
+/// Validate an authored record independently, before the one document-wide
+/// transaction. Uses the same syntax/precision and semantic rules as reload.
+pub(crate) fn validate_authored_record(
+    record: &Record,
+) -> Result<crate::model::TypedFeature, WriteError> {
+    let roles = parameter_roles(record)?;
+    if roles.len() != record.parameters.len() {
+        return Err(fail(format!("Invalid {} parameter count", record.keyword)));
+    }
+    for (value, role) in record.parameters.iter().zip(roles.chars()) {
+        validate_parameter(value, role)?;
+    }
+    validate_vertex_counts(record)?;
+    let feature = crate::parser::Parser::new("", FileFormat::Sfc, true)
+        .parse_typed_feature(record)
+        .ok_or_else(|| fail("Unsupported authored feature kind"))?
+        .map_err(fail)?;
+    crate::features::validate_typed_feature_values(&feature).map_err(fail)?;
+    Ok(feature)
+}
+
 // I: integer, L: length (<=6 fractional digits), A: angle/scale (<=15 digits),
 // T: semantic string, X/J: real/integer aggregate, H: seven-field hatch pattern.
 // Keep field positions aligned with features.rs and SFC spec §§1-2-1..1-2-34.

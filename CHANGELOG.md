@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+- Structured `extend` batches for fills, hatches, composite boundaries, nested
+  parts/groups and partial drawings, plus direct insertion into a definition.
+- Zero-based input indices for batch errors and atomic `on_invalid="skip"`
+  returning IDs and rejection reasons. Placement scale failures identify the
+  positive-scale requirement directly.
+- Native P21 point markers (all seven kinds) and cubic Bezier spline segments;
+  explicit standalone `unsupported="drop"` with a source-entity report.
+- `new_sfc(target="p21")`, `validate_p21()` and source IDs in P21 geometry
+  failures. Zero-area fill/hatch additions are rejected for either target.
+- Shared identical P21 Cartesian points and public `ezsxf.build_drawing`.
+- Reproducible 50,000-feature structured/20,000-input rejection workloads and
+  paired marker/spline CAD controls. Native CAD checks for these changes pending.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.

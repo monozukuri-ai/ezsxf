@@ -44,6 +44,7 @@ def check(directory: Path, version: str) -> dict[str, str]:
                     "add_line_width",
                     "save",
                     "extend",
+                    "validate_p21",
                     "create_part",
                     "to_p21_bytes",
                     "save_p21",
@@ -77,6 +78,9 @@ def check(directory: Path, version: str) -> dict[str, str]:
                     "src/writer.rs",
                     "src/authoring.rs",
                     "src/p21_writer.rs",
+                    "src/p21_validation.rs",
+                    "src/bulk_editor.rs",
+                    "src/python_bulk.rs",
                     "src/p21_annotations.rs",
                     "src/p21_hatches.rs",
                     "src/p21_bundle.rs",
@@ -85,12 +89,15 @@ def check(directory: Path, version: str) -> dict[str, str]:
                     "src/ezsxf/_core.pyi",
                     "tests/test_sfc_styles.py",
                     "tests/test_writer_requests.py",
+                    "tests/test_writer_requests_v2.py",
                     "tests/test_p21_delivery.py",
                     "tests/fixtures/writer_all_features.sfc",
                     "scripts/verify_sfc_mvp.py",
                     "scripts/verify_writer_requests.py",
+                    "scripts/verify_writer_requests_v2.py",
                     "docs/sfc-writer-mvp.md",
                     "docs/p21-writing.md",
+                    "docs/bulk-writing.md",
                 ):
                     assert required in names, f"Missing source file: {required}"
                 for member in members:

@@ -224,7 +224,7 @@ class P21DeliveryTest(unittest.TestCase):
             with self.assertRaises(ValueError): doc.to_p2z_bytes(file_name="../x.p21")
             empty = ezsxf.new_sfc()
             empty.add_line((0,0),(1,1))
-            empty.add_feature("spline")
+            empty.add_feature("clothoid")
             with self.assertRaises(ValueError): empty.save_p2z(target)
             self.assertEqual(target.read_bytes(), b"original")
 

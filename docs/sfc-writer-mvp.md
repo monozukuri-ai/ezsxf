@@ -57,6 +57,9 @@ including an input generator exception, leaves the document unchanged.
 An empty iterable is a no-op. New elements are appended to the sheet, retaining
 existing group definitions and style codes. Style definitions should be created
 before the batch. Complex leaf kinds accepted by `add_feature` also work.
+Inline fills, hatches, shared parts, groups and partial drawings are supported;
+see [structured bulk authoring](bulk-writing.md) for their dictionary shapes,
+`on_invalid="skip"`, direct definition insertion and P21 preflight.
 Fields use `update_element` names from the tables below; basic authoring also
 accepts `start`, `end`, `center` and `anchor` coordinate pairs. Conflicting pair
 and scalar fields are rejected. `to_bytes` still performs final save validation;
