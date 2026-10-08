@@ -1,6 +1,6 @@
 [package]
 name = "ezsxf"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Fast SXF parser, SFC writer and drawing converter for Python powered by Rust"
