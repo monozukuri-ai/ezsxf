@@ -115,7 +115,7 @@ class P21DeliveryTest(unittest.TestCase):
             # The authored fixture's SAF dependency is loaded explicitly.
             source = root / "writer-fixture.sfc"
             source.write_bytes(doc.to_bytes(allow_external_references=True))
-            (root / "writer-fixture.SAF").write_text('<SxfAttributeXML version="3.0" date="2026-10-07" application="test" sxfFile="writer-fixture.sfc"><Figure id="102" name="line"><AttributeSet name="set" version="1" designedBy="test"><Attr name="材料">鋼</Attr></AttributeSet></Figure></SxfAttributeXML>')
+            (root / "writer-fixture.SAF").write_text('<SxfAttributeXML version="3.0" date="2026-10-07" application="test" sxfFile="writer-fixture.sfc"><Figure id="102" name="line"><AttributeSet name="set" version="1" designedBy="test"><Attr name="材料">鋼</Attr></AttributeSet></Figure></SxfAttributeXML>', encoding="utf-8")
             ezsxf.write_p21_bundle(source, root / "p21")
             parsed = ezsxf.parse_p21(str(root / "p21/writer-fixture.p21"))
         for kind in ["EXTERNALLY_DEFINED_HATCH_STYLE", "FILL_AREA_STYLE_COLOUR", "FILL_AREA_STYLE_HATCHING", "FILL_AREA_STYLE_TILES"]:

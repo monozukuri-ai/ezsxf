@@ -361,7 +361,7 @@ fn interior_point(polygons: &[Vec<Point2>]) -> Result<Point2, WriteError> {
             }
         }
         crossings.sort_by(f64::total_cmp);
-        for pair in crossings.chunks_exact(2) {
+        for pair in crossings.as_chunks::<2>().0 {
             if pair[1] - pair[0] > 1.0e-6 {
                 return Ok(Point2 {
                     x: pair[0] + (pair[1] - pair[0]) / 2.0,

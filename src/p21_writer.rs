@@ -486,7 +486,7 @@ pub(crate) fn serialize_p21_with_dependencies(
                 if font.pitch.len() % 2 != 0 {
                     return Err(error("P21 custom line type needs draw/gap pairs"));
                 }
-                for pair in font.pitch.chunks_exact(2) {
+                for pair in font.pitch.as_chunks::<2>().0 {
                     patterns.push(graph.add(
                         "CURVE_STYLE_FONT_PATTERN",
                         vec![real(pair[0]), real(pair[1])],
