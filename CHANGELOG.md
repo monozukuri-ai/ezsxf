@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- P21 drawing conversion now renders trimmed ellipses and retains exact
+  elliptical-arc geometry, local parameter trims, sense and nonuniform placements.
+
 - Structured `extend` batches for fills, hatches, composite boundaries, nested
   parts/groups and partial drawings, plus direct insertion into a definition.
 - Zero-based input indices for batch errors and atomic `on_invalid="skip"`

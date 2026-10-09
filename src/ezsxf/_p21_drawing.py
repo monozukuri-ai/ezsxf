@@ -70,7 +70,7 @@ class P21DrawingBuilder:
         self.hidden: Set[int] = set()
         self.sheet_items: List[int] = []
         self._geometry_cache: Dict[int, List[Geometry]] = {}
-        # Exact curve of entities whose geometry is one circle/ellipse/circular arc.
+        # Exact curve of entities whose geometry is one circle/ellipse or arc.
         self._curve_cache: Dict[int, CurveGeometry] = {}
         self._style_cache: Dict[Tuple[int, ...], _StyleValues] = {}
         self._text_keys: Set[Tuple[Any, ...]] = set()
@@ -1040,6 +1040,51 @@ class P21DrawingBuilder:
                     center=center,
                     axis_u=(radius, 0.0),
                     axis_v=(0.0, radius),
+                    start_param=math.radians(start_angle),
+                    end_param=math.radians(start_angle + sweep),
+                    closed=False,
+                )
+            return [(points, False)]
+
+        ellipse = basis.get("ELLIPSE")
+        if ellipse is not None:
+            ellipse_params = ellipse.get("parameters", [])
+            if len(ellipse_params) < 4:
+                return []
+            axis_id = _reference(ellipse_params[1])
+            if axis_id is None:
+                return []
+            start = _first_number(params[2])
+            end = _first_number(params[3])
+            if start is None or end is None:
+                return []
+            axis = self._axis_transform(axis_id)
+            center = apply(axis, (0.0, 0.0))
+            rotation = math.atan2(axis[1], axis[0])
+            # Trims are local ellipse parameters, not angles of sheet-space
+            # radius vectors. Rotation belongs in the conjugate semi-diameters.
+            start_angle = round(math.degrees(start), 10)
+            end_angle = round(math.degrees(end), 10)
+            direction_flag = 0 if agrees else 1
+            radius_x, radius_y = float(ellipse_params[2]), float(ellipse_params[3])
+            points = sample_ellipse(
+                center,
+                radius_x,
+                radius_y,
+                math.degrees(rotation),
+                start_angle,
+                end_angle,
+                direction_flag,
+                self.curve_segments,
+                closed=False,
+            )
+            if entity_id is not None:
+                sweep = arc_sweep_deg(start_angle, end_angle, direction_flag)
+                self._curve_cache[entity_id] = CurveGeometry(
+                    kind="ellipse_arc",
+                    center=center,
+                    axis_u=(radius_x * math.cos(rotation), radius_x * math.sin(rotation)),
+                    axis_v=(-radius_y * math.sin(rotation), radius_y * math.cos(rotation)),
                     start_param=math.radians(start_angle),
                     end_param=math.radians(start_angle + sweep),
                     closed=False,

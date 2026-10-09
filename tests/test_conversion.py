@@ -186,6 +186,100 @@ def _assert_points_on_curve(case: unittest.TestCase, path: object) -> None:
 
 
 class DrawingConversionTest(unittest.TestCase):
+    def test_p21_ellipse_arc_trims_keep_local_parameters_and_sense(self) -> None:
+        import math
+
+        for direction, start, end in (
+            (0, 10, 200),
+            (1, 10, 200),
+            (0, 350, 10),
+            (1, 10, 350),
+            (1, 30, 120),
+            (0, 45, 45),
+            (1, 45, 45),
+        ):
+            with self.subTest(direction=direction, start=start, end=end):
+                doc = ezsxf.new_sfc(timestamp="2026-10-09T00:00:00")
+                doc.add_feature(
+                    "ellipse_arc",
+                    center_x=30,
+                    center_y=30,
+                    radius_x=4,
+                    radius_y=2,
+                    angle=30,
+                    direction=direction,
+                    start_angle=start,
+                    end_angle=end,
+                )
+                source = ezsxf.build_drawing(doc.to_bytes(), curve_segments=64)
+                result = ezsxf.build_drawing(doc.to_p21_bytes(), curve_segments=64)
+                self.assertEqual(result.warnings, [])
+                self.assertEqual(len(result.paths), 1)
+                expected, actual = source.paths[0], result.paths[0]
+                self.assertEqual(actual.curve.kind, "ellipse_arc")
+                self.assertFalse(actual.curve.closed)
+                self.assertAlmostEqual(actual.curve.start_param, math.radians(start))
+                self.assertAlmostEqual(actual.curve.end_param, expected.curve.end_param)
+                self.assertAlmostEqual(math.hypot(*actual.curve.axis_u), 4)
+                self.assertAlmostEqual(math.hypot(*actual.curve.axis_v), 2)
+                self.assertEqual(len(actual.points), len(expected.points))
+                for p, q in zip(actual.points, expected.points):
+                    for a, b in zip(p, q):
+                        self.assertAlmostEqual(a, b, places=9)
+                _assert_points_on_curve(self, actual)
+
+    def test_p21_ellipse_arcs_keep_nonuniform_nested_placements(self) -> None:
+        doc = ezsxf.new_sfc(timestamp="2026-10-09T00:00:00")
+        doc.extend(
+            [
+                {
+                    "kind": "part",
+                    "name": "outer",
+                    "elements": [
+                        {
+                            "kind": "part",
+                            "name": "inner",
+                            "elements": [
+                                {
+                                    "kind": "ellipse_arc",
+                                    "center_x": 3,
+                                    "center_y": 4,
+                                    "radius_x": 4,
+                                    "radius_y": 2,
+                                    "angle": 30,
+                                    "direction": 1,
+                                    "start_angle": 10,
+                                    "end_angle": 200,
+                                }
+                            ],
+                            "placements": [
+                                {"position": (10, 20), "angle": 70, "scale": (2, 0.5)}
+                            ],
+                        }
+                    ],
+                    "placements": [
+                        {"position": (50, 60), "angle": 15, "scale": (0.5, 3)}
+                    ],
+                }
+            ]
+        )
+        expected = ezsxf.build_drawing(doc.to_bytes(), curve_segments=64).paths[0]
+        drawing = ezsxf.build_drawing(doc.to_p21_bytes(), curve_segments=64)
+        self.assertEqual(drawing.warnings, [])
+        self.assertEqual(len(drawing.paths), 1)
+        actual = drawing.paths[0]
+        self.assertEqual(actual.curve.kind, "ellipse_arc")
+        for name in ("center", "axis_u", "axis_v"):
+            for a, b in zip(getattr(actual.curve, name), getattr(expected.curve, name)):
+                self.assertAlmostEqual(a, b, places=9)
+        self.assertAlmostEqual(actual.curve.start_param, expected.curve.start_param)
+        self.assertAlmostEqual(actual.curve.end_param, expected.curve.end_param)
+        self.assertEqual(len(actual.points), len(expected.points))
+        for p, q in zip(actual.points, expected.points):
+            for a, b in zip(p, q):
+                self.assertAlmostEqual(a, b, places=9)
+        _assert_points_on_curve(self, actual)
+
     def test_p21_circles_and_trimmed_arcs_carry_their_exact_curve(self) -> None:
         import math
 

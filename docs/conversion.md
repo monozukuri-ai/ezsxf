@@ -37,6 +37,10 @@ for `t` from `start_param` to `end_param`; `axis_u`/`axis_v` are conjugate
 semi-diameters, so a circle placed with unequal X/Y ratios is reported as the
 ellipse it becomes.
 
+P21 `TRIMMED_CURVE` on an `ELLIPSE` retains an `ellipse_arc` curve with local
+parameter trims, rotation and clockwise/counterclockwise sense. Nested and
+unequal X/Y placements transform both the exact curve and its sampled points.
+
 Conversion accepts SFC and supported P21 geometry. P21 parsing exposes generic
 entities; conversion does not implement the entire AP202 schema. Inspect
 `Drawing.warnings` for conversion limits. Externally defined symbols are
