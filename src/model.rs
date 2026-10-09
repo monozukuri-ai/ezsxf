@@ -659,8 +659,8 @@ pub struct DrawingSheetFeature {
     pub name: String,
     pub sheet_type: i64,
     pub orientation: i64,
-    pub free_x_mm: i64,
-    pub free_y_mm: i64,
+    pub free_x_mm: f64,
+    pub free_y_mm: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]

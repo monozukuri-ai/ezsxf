@@ -417,11 +417,12 @@ class WriterRequestsV2Test(unittest.TestCase):
         with self.assertRaises(ValueError):
             doc.to_p21_bytes()
         payload, dropped = doc.to_p21_bytes(unsupported="drop", report=True)
-        self.assertTrue({clothoid, geo_member, geo} <= {id_ for id_, _ in dropped})
+        self.assertIn(clothoid, {id_ for id_, _ in dropped})
+        self.assertTrue({geo_member, geo}.isdisjoint({id_ for id_, _ in dropped}))
         self.assertNotIn(kept, {id_ for id_, _ in dropped})
         result = ezsxf.build_drawing(payload)
         self.assertEqual(result.warnings, [])
-        self.assertEqual(len(result.paths), 2)
+        self.assertEqual(len(result.paths), 3)
         self.assertEqual(doc.to_dict(), before)
         doc.to_bytes()
 

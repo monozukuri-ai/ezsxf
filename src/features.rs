@@ -184,8 +184,8 @@ pub(crate) fn parse_drawing_sheet_feature(params: &[Value]) -> Result<DrawingShe
         name: parse_required_string(&params[0], "name")?,
         sheet_type: parse_required_i64(&params[1], "type")?,
         orientation: parse_required_i64(&params[2], "orientation")?,
-        free_x_mm: parse_required_i64(&params[3], "x")?,
-        free_y_mm: parse_required_i64(&params[4], "y")?,
+        free_x_mm: parse_required_i64(&params[3], "x")? as f64,
+        free_y_mm: parse_required_i64(&params[4], "y")? as f64,
     })
 }
 
@@ -1049,11 +1049,15 @@ pub(crate) fn validate_typed_feature_values(feature: &TypedFeature) -> Result<()
                 "sheet orientation must be 0 or 1",
             )?;
             ensure(
-                value.free_x_mm > 0 && value.free_x_mm <= i64::from(i32::MAX),
+                value.free_x_mm > 0.0
+                    && value.free_x_mm <= f64::from(i32::MAX)
+                    && value.free_x_mm.fract() == 0.0,
                 "sheet X length must fit a positive 32-bit integer",
             )?;
             ensure(
-                value.free_y_mm > 0 && value.free_y_mm <= i64::from(i32::MAX),
+                value.free_y_mm > 0.0
+                    && value.free_y_mm <= f64::from(i32::MAX)
+                    && value.free_y_mm.fract() == 0.0,
                 "sheet Y length must fit a positive 32-bit integer",
             )?;
         }

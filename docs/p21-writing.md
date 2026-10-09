@@ -40,7 +40,7 @@ The source dictionary and editable document remain unchanged.
 | TIFF/JPEG image | Standard image attribute on a clockwise placement rectangle; bytes and filename are preserved in the bundle/P2Z |
 | Layers and visibility | Presentation layer assignments/usages and invisibility |
 | Predefined/RGB colours, predefined/custom line types and widths | Presentation styles, draw/gap pattern pairs and millimetre measures |
-| Mathematical partial drawing (kind 1), group (kind 3), drawing part (kind 4) | Subfigure representations, shared symbol maps and explicit placements, including nested and unequal X/Y scale |
+| Mathematical/geodetic partial drawing (kinds 1/2), group (kind 3), drawing part (kind 4) | Subfigure representations, shared symbol maps and explicit placements, including nested and unequal X/Y scale |
 
 Input validation follows the SFC precision/CP932 contract. P21 uses ASCII with
 standard STEP `X2` Unicode escapes for Japanese and special strings, CRLF,
@@ -52,9 +52,11 @@ atomic regular-file replacement and symlink rejection as SFC saving.
 
 Clothoids and spline control layouts other than `3n+1` fail with an
 unsupported-feature error. Predefined symbols retain their external identifiers and colour mode;
-their graphics depend on the receiving CAD's symbol library. Geodetic
-partial drawings (kind 2) also fail, because their exchanged local axes need a
-separate implementation. Zero-length lines cannot form valid AP202 directions
+their graphics depend on the receiving CAD's symbol library. Geodetic partial
+drawings use `$$SXF_FG_` and preserve the SFC local coordinates and placement
+transform. Their new output has local SFC/P21 regression coverage; the recorded
+native-CAD checks below cover mathematical partial drawings.
+Zero-length lines cannot form valid AP202 directions
 and are rejected. Errors identify source entities. `new_sfc(target="p21")`
 checks P21 constraints at insertion; `validate_p21()` lists issues in existing
 documents. Standalone `to_p21_bytes(unsupported="drop", report=True)` explicitly

@@ -77,6 +77,7 @@ class PythonApiTest(unittest.TestCase):
         self.assertEqual(out["format"], "p21")
         self.assertEqual(len(out["entities"]), 1)
         self.assertEqual(len(out["typed_features"]), 0)
+        self.assertIsNone(out["model"])
 
     def test_parse_sfc_text(self) -> None:
         out = ezsxf.parse_sfc(MINIMAL_SFC, strict=True)

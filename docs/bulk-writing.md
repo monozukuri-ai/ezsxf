@@ -107,10 +107,13 @@ payload, dropped = doc.to_p21_bytes(unsupported="drop", report=True)
 # dropped: [(source_entity_id, reason), ...], in source order
 ```
 
+Mathematical (kind 1) and geodetic (kind 2) partial drawings retain their SFC
+coordinates, rotation and X/Y scale in P21. Geodetic definitions use `$$SXF_FG_`;
+the writer and both drawing readers apply the same placement transform.
+
 The default remains `unsupported="raise"`. Explicit `drop` omits clothoids,
-geodetic partial drawings (kind 2), unsupported spline control layouts and
-dependent content. A dropped geodetic definition removes its owned geometry
-and placements. Broken composite boundaries/fills, attribute wrappers and empty
+unsupported spline control layouts and dependent content.
+Broken composite boundaries/fills, attribute wrappers and empty
 figures are pruned; the report includes those dependent IDs. Inspect the report
 before delivery. Invalid supported geometry still raises an error. The source
 document remains unchanged, so it can also produce SFC.

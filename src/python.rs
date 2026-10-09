@@ -215,8 +215,17 @@ fn typed_feature_instance_to_python<'py>(
             d.set_item("name", &feature.name)?;
             d.set_item("sheet_type", feature.sheet_type)?;
             d.set_item("orientation", feature.orientation)?;
-            d.set_item("free_x_mm", feature.free_x_mm)?;
-            d.set_item("free_y_mm", feature.free_y_mm)?;
+            // Preserve the SFC integer-valued API while retaining fractional P21 sizes.
+            for (key, value) in [
+                ("free_x_mm", feature.free_x_mm),
+                ("free_y_mm", feature.free_y_mm),
+            ] {
+                if value.fract() == 0.0 && value >= 0.0 && value < i64::MAX as f64 {
+                    d.set_item(key, value as i64)?;
+                } else {
+                    d.set_item(key, value)?;
+                }
+            }
         }
         TypedFeature::Layer(feature) => {
             d.set_item("kind", "layer")?;

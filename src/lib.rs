@@ -13,6 +13,7 @@ mod features;
 mod image;
 mod model;
 mod p21_bundle;
+mod p21_model;
 mod p21_writer;
 mod parser;
 mod python;

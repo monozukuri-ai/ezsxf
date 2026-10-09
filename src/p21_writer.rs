@@ -860,14 +860,8 @@ fn generate(
                     let definition_id = targets[&feature.id];
                     let map = lookup(&graph.maps, definition_id, "subfigure")?;
                     let definition = &definitions[&definition_id];
-                    // Geodetic partial drawings exchange X and Y local axes (Feature
-                    // Specification §2-3); rejected until the reader shares that rule.
-                    if definition.kind_flag == 2 {
-                        return Err(error(format!(
-                            "P21 geodetic partial drawing #{} is not supported",
-                            definition_id
-                        )));
-                    }
+                    // Preserve the same local coordinates and placement transform as
+                    // the SFC reader for both mathematical and geodetic drawings.
                     let axis = graph.axis(&placement.position, placement.angle_deg);
                     let target = graph.add(
                         "SYMBOL_TARGET",
@@ -893,6 +887,7 @@ fn generate(
                     );
                     let prefix = match definition.kind_flag {
                         1 => "FM",
+                        2 => "FG",
                         3 => "G",
                         4 => "P",
                         _ => unreachable!(),
@@ -930,12 +925,12 @@ fn generate(
         sheet.sheet_type,
         sheet.orientation,
         if sheet.sheet_type == 9 {
-            Some(sheet.free_x_mm as f64)
+            Some(sheet.free_x_mm)
         } else {
             None
         },
         if sheet.sheet_type == 9 {
-            Some(sheet.free_y_mm as f64)
+            Some(sheet.free_y_mm)
         } else {
             None
         },

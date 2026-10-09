@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- P21 output for geodetic partial drawings (kind 2), retaining the SFC
+  coordinates and placement transform with `$$SXF_FG_` identifiers.
+- Common P21/SFC sheet and subfigure metadata in `typed_features` and `model`,
+  including decoded Unicode names, fractional FREE paper sizes, nested/shared
+  placements and attribute wrappers. Original STEP records remain intact.
+
 - P21 drawing conversion now renders trimmed ellipses and retains exact
   elliptical-arc geometry, local parameter trims, sense and nonuniform placements.
 

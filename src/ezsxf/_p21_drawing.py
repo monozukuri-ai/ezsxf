@@ -103,6 +103,7 @@ class P21DrawingBuilder:
             self.drawing.warnings.append(message)
 
     def _scan_presentation_structure(self) -> None:
+        seen_sheet = False
         for entity_id, records in self.records.items():
             layer = records.get("PRESENTATION_LAYER_ASSIGNMENT")
             if layer is not None:
@@ -119,7 +120,8 @@ class P21DrawingBuilder:
                     self.hidden.update(_references(params[0]))
 
             sheet = records.get("DRAWING_SHEET_REVISION")
-            if sheet is not None:
+            if sheet is not None and not seen_sheet:
+                seen_sheet = True
                 params = sheet.get("parameters", [])
                 if len(params) >= 2:
                     self.sheet_items = list(_references(params[1]))

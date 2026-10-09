@@ -5,10 +5,8 @@ pub(crate) fn dropped(output: &ParseOutput) -> BTreeMap<i64, String> {
     let model = output.document.sfc_model.as_ref().unwrap();
     let mut dropped = BTreeMap::new();
     for item in &output.document.typed_features {
-        if matches!(
-            &item.feature,
-            TypedFeature::Clothoid(_) | TypedFeature::SfigOrg(SfigOrgFeature { kind_flag: 2, .. })
-        ) || matches!(&item.feature,TypedFeature::Spline(v) if v.points.len()<4 || (v.points.len()-1)%3!=0)
+        if matches!(&item.feature, TypedFeature::Clothoid(_))
+            || matches!(&item.feature,TypedFeature::Spline(v) if v.points.len()<4 || (v.points.len()-1)%3!=0)
         {
             dropped.insert(item.id, feature_reason(&item.feature).unwrap());
         }
@@ -137,9 +135,6 @@ pub(crate) fn feature_reason(feature: &TypedFeature) -> Option<String> {
     }
     match feature {
         TypedFeature::Clothoid(_) => Some("P21 output does not support clothoid_feature".into()),
-        TypedFeature::SfigOrg(v) if v.kind_flag == 2 => {
-            Some("P21 geodetic partial drawing (kind 2) is not supported".into())
-        }
         TypedFeature::Spline(v) if v.points.len() < 4 || (v.points.len() - 1) % 3 != 0 => {
             Some("P21 cubic spline needs 3n+1 control points (at least four)".into())
         }

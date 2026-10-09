@@ -190,6 +190,8 @@ impl<'a> Parser<'a> {
         if self.format == FileFormat::Sfc {
             document.typed_features = self.extract_typed_features(&document.entities)?;
             document.sfc_model = Some(self.build_sfc_model(&document)?);
+        } else {
+            self.build_p21_model(&mut document);
         }
         self.validate_document(&document)?;
 

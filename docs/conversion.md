@@ -42,7 +42,8 @@ parameter trims, rotation and clockwise/counterclockwise sense. Nested and
 unequal X/Y placements transform both the exact curve and its sampled points.
 
 Conversion accepts SFC and supported P21 geometry. P21 parsing exposes generic
-entities; conversion does not implement the entire AP202 schema. Inspect
+entities and [common sheet/subfigure metadata](usage.md#common-p21-sheet-and-subfigure-metadata);
+conversion does not implement the entire AP202 schema. Inspect
 `Drawing.warnings` for conversion limits. Externally defined symbols are
 shown as insertion markers, while externally defined and tiled hatch patterns
 retain only boundaries marked visible by the SXF data.
