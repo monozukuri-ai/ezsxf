@@ -22,7 +22,7 @@ python -m pip install "ezsxf[plot]"
 ```
 
 The core package has no runtime Python dependencies. Prebuilt wheels are
-available for Linux x86-64, Windows x86-64 and macOS x86-64/ARM64. Building from
+available for Linux x86-64/ARM64, Windows x86-64 and macOS x86-64/ARM64. Building from
 source requires Rust; see [Contributing](CONTRIBUTING.md).
 
 ## Quick start
