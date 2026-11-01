@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- `SfcDocument.to_bytes` no longer reparses a document it already validated, and
+  batches no longer clone `typed_features` and `model` or keep their inputs while
+  validating. A 256,000 entity drawing went from 3.5 GB to 1.9 GB peak.
+
 - P21 output for geodetic partial drawings (kind 2), retaining the SFC
   coordinates and placement transform with `$$SXF_FG_` identifiers.
 - Common P21/SFC sheet and subfigure metadata in `typed_features` and `model`,

@@ -1,7 +1,9 @@
 //! Transactional editing of basic, direct drawing-sheet elements.
 
 use crate::model::*;
-use crate::writer::{encode_document, serialize_sfc, SfcWriteOptions, WriteError};
+use crate::writer::{
+    encode_document, serialize_sfc, serialize_validated, SfcWriteOptions, WriteError,
+};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
@@ -182,7 +184,21 @@ impl SfcDocument {
         &self.output
     }
     pub fn to_bytes(&self, options: SfcWriteOptions) -> Result<Vec<u8>, WriteError> {
-        serialize_sfc(&self.output, options)
+        // `output` only ever comes from `new`, `from_output` or `commit`, which all validate.
+        serialize_validated(&self.output, options)
+    }
+    /// The parts of the current document that a transaction edits. `commit`
+    /// rebuilds `typed_features` and `sfc_model` from its reparse, and they
+    /// are the larger half of a big drawing, so they are not worth cloning.
+    pub(crate) fn commit_base(&self) -> ParsedDocument {
+        let document = &self.output.document;
+        ParsedDocument {
+            format: document.format,
+            header: document.header.clone(),
+            entities: document.entities.clone(),
+            typed_features: Vec::new(),
+            sfc_model: None,
+        }
     }
     pub(crate) fn commit(&mut self, document: ParsedDocument) -> Result<(), WriteError> {
         let output = validate(&document)?;

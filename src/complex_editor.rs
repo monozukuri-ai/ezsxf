@@ -235,7 +235,7 @@ impl SfcDocument {
             .map(|leaf| Ok(crate::bulk_editor::BatchElement::Feature(leaf)))
             .collect::<Vec<_>>();
         Ok(self
-            .extend_structured(&elements, false, None)?
+            .extend_structured(elements, false, None)?
             .ids
             .into_iter()
             .map(|id| match id {

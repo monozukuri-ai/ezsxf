@@ -205,7 +205,7 @@ impl PythonSfcDocument {
         }
         let report = self
             .document
-            .extend_structured(&inputs, on_invalid == "skip", into)
+            .extend_structured(inputs, on_invalid == "skip", into)
             .map_err(error)?;
         let py = elements.py();
         let ids: Vec<PyObject> = report

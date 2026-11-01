@@ -361,7 +361,7 @@ impl Fragment<'_> {
 impl SfcDocument {
     pub(crate) fn extend_structured(
         &mut self,
-        elements: &[Result<BatchElement, String>],
+        elements: Vec<Result<BatchElement, String>>,
         skip: bool,
         into: Option<i64>,
     ) -> Result<BatchResult, WriteError> {
@@ -472,8 +472,9 @@ impl SfcDocument {
                 }
             }
         }
+        drop(elements);
         if !definitions.is_empty() || !roots.is_empty() {
-            let mut candidate = self.output.document.clone();
+            let mut candidate = self.commit_base();
             if let Some(target) = target {
                 let position = candidate
                     .entities
@@ -532,6 +533,7 @@ impl SfcDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::writer::{serialize_sfc, SfcWriteOptions};
     fn doc() -> SfcDocument {
         SfcDocument::new("drawing.sfc", "drawing", 297, 210, "2026-10-08").unwrap()
     }
@@ -552,7 +554,7 @@ mod tests {
         };
         let result = document
             .extend_structured(
-                &[Ok(part(-1.0)), Ok(part(2.0)), Ok(circle(3.0))],
+                vec![Ok(part(-1.0)), Ok(part(2.0)), Ok(circle(3.0))],
                 true,
                 None,
             )
@@ -578,11 +580,39 @@ mod tests {
         let mut document = doc();
         let before = document.output.clone();
         let message = document
-            .extend_structured(&[Ok(circle(1.0)), Ok(circle(-1.0))], false, None)
+            .extend_structured(vec![Ok(circle(1.0)), Ok(circle(-1.0))], false, None)
             .unwrap_err()
             .to_string();
         assert!(message.starts_with("Element 1: Entity #8:"));
         assert_eq!(document.output, before);
+    }
+    #[test]
+    fn to_bytes_without_a_reparse_matches_the_full_serializer() {
+        let mut document = doc();
+        document
+            .extend_structured(vec![Ok(circle(1.0)), Ok(circle(2.0))], false, None)
+            .unwrap();
+        let options = SfcWriteOptions::default();
+        assert_eq!(
+            document.to_bytes(options).unwrap(),
+            serialize_sfc(document.snapshot(), options).unwrap()
+        );
+    }
+    #[test]
+    fn a_second_batch_keeps_the_model_of_the_first() {
+        let mut document = doc();
+        let first = document
+            .extend_structured(vec![Ok(circle(1.0))], false, None)
+            .unwrap();
+        let before = document.snapshot().document.typed_features.len();
+        let second = document
+            .extend_structured(vec![Ok(circle(2.0))], false, None)
+            .unwrap();
+        let after = &document.snapshot().document;
+        assert_eq!(after.typed_features.len(), before + 1);
+        assert_eq!(after.typed_features.len(), after.entities.len());
+        assert!(after.sfc_model.is_some());
+        assert_ne!(first.ids, second.ids);
     }
     #[test]
     fn p21_target_checks_new_features_before_commit() {
@@ -591,7 +621,7 @@ mod tests {
         let before = document.output.clone();
         let e = BatchElement::Feature(("line".into(), BTreeMap::new()));
         let message = document
-            .extend_structured(&[Ok(e)], false, None)
+            .extend_structured(vec![Ok(e)], false, None)
             .unwrap_err()
             .to_string();
         assert!(message.contains("Element 0: Entity #7: P21 cannot emit a zero-length line"));

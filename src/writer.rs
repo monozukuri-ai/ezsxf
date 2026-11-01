@@ -141,6 +141,64 @@ pub(crate) fn encode_document(
     document: &ParsedDocument,
     options: SfcWriteOptions,
 ) -> Result<(Vec<u8>, ParseOutput), WriteError> {
+    let bytes = emit_document(document, options)?;
+    let validated = parse_from_bytes(FileFormat::Sfc, &bytes, true)
+        .map_err(|error| fail(format!("SFC output validation failed: {error}")))?;
+    if let Some(warning) = validated.warnings.first() {
+        return Err(fail(format!(
+            "SFC output validation failed: {}: {}",
+            warning.code, warning.message
+        )));
+    }
+    if validated.document.entities != document.entities
+        || validated.document.header != document.header
+        || validated.document.typed_features.len() != document.entities.len()
+    {
+        return Err(fail("SFC output changed or omitted entity/header values"));
+    }
+    reject_external_references(&validated.document, options)?;
+    Ok((bytes, validated))
+}
+
+/// Serialize a document that already passed [`encode_document`] with the
+/// default spelling. Emitting is deterministic, so reparsing the same bytes
+/// again would only hold a second copy of a large drawing in memory.
+pub(crate) fn serialize_validated(
+    output: &ParseOutput,
+    options: SfcWriteOptions,
+) -> Result<Vec<u8>, WriteError> {
+    if options.literal_backslashes {
+        return serialize_sfc(output, options);
+    }
+    reject_external_references(&output.document, options)?;
+    emit_document(&output.document, options)
+}
+
+fn reject_external_references(
+    document: &ParsedDocument,
+    options: SfcWriteOptions,
+) -> Result<(), WriteError> {
+    if !options.allow_external_references
+        && document.sfc_model.as_ref().is_some_and(|model| {
+            model.attribute_attachments.iter().any(|attachment| {
+                matches!(
+                    attachment.mechanism,
+                    SfcAttributeMechanism::AttributeFile { .. }
+                )
+            })
+        })
+    {
+        return Err(fail(
+            "SFC references an external SAF file; use allow_external_references=True to preserve references without copying SAF/images",
+        ));
+    }
+    Ok(())
+}
+
+fn emit_document(
+    document: &ParsedDocument,
+    options: SfcWriteOptions,
+) -> Result<Vec<u8>, WriteError> {
     if document.format != FileFormat::Sfc {
         return Err(fail("SFC serialization requires an SFC document"));
     }
@@ -211,35 +269,7 @@ pub(crate) fn encode_document(
     if had_errors || decoded != text {
         return Err(fail("Shift-JIS encoding would change SFC character values"));
     }
-    let validated = parse_from_bytes(FileFormat::Sfc, &bytes, true)
-        .map_err(|error| fail(format!("SFC output validation failed: {error}")))?;
-    if let Some(warning) = validated.warnings.first() {
-        return Err(fail(format!(
-            "SFC output validation failed: {}: {}",
-            warning.code, warning.message
-        )));
-    }
-    if validated.document.entities != document.entities
-        || validated.document.header != document.header
-        || validated.document.typed_features.len() != document.entities.len()
-    {
-        return Err(fail("SFC output changed or omitted entity/header values"));
-    }
-    if !options.allow_external_references
-        && validated.document.sfc_model.as_ref().is_some_and(|model| {
-            model.attribute_attachments.iter().any(|attachment| {
-                matches!(
-                    attachment.mechanism,
-                    SfcAttributeMechanism::AttributeFile { .. }
-                )
-            })
-        })
-    {
-        return Err(fail(
-            "SFC references an external SAF file; use allow_external_references=True to preserve references without copying SAF/images",
-        ));
-    }
-    Ok((bytes.into_owned(), validated))
+    Ok(bytes.into_owned())
 }
 
 /// Validate an authored record independently, before the one document-wide
