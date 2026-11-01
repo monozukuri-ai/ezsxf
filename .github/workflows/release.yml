@@ -5,9 +5,19 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to publish (leave empty to validate only)
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
+
+env:
+  SOURCE_REF: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.sha }}
+  RELEASE_REF: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
 
 jobs:
   qualify:
@@ -15,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_REF }}
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
@@ -37,6 +49,8 @@ jobs:
             target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_REF }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -69,9 +83,12 @@ jobs:
 
   source:
     name: Qualify sdist on minimum Python
-    runs-on: ubuntu-latest
+    # Python 3.9 is unavailable on Ubuntu 26.04 (ubuntu-latest).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_REF }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
@@ -113,6 +130,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_REF }}
       - uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
@@ -126,8 +145,6 @@ jobs:
         with:
           python-version: "3.12"
       - name: Check versions, payload and hashes
-        env:
-          RELEASE_REF: ${{ github.ref }}
         run: |
           version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           if [[ "$RELEASE_REF" == refs/tags/* ]]; then
@@ -136,12 +153,13 @@ jobs:
           python scripts/check_distribution.py dist --version "$version" --hashes SHA256SUMS
           (cd dist && sha256sum --check ../SHA256SUMS)
       - name: Publish to PyPI
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(env.RELEASE_REF, 'refs/tags/')
         uses: pypa/gh-action-pypi-publish@release/v1
       - name: Create GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(env.RELEASE_REF, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
           generate_release_notes: true
           files: |
             dist/*
