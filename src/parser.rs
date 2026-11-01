@@ -1224,6 +1224,21 @@ pub fn parse_p21_text(input: &str, strict: bool) -> Result<ParseOutput, ParseErr
     Parser::new(input, FileFormat::P21, strict).parse()
 }
 
+/// One `#id=...;` record of a P21 DATA section, with nothing else around it.
+///
+/// The P21 writer checks every record it emits this way, so that a drawing of a
+/// million records is never parsed back as a whole: the parser holds its input as
+/// `Vec<char>`, four bytes per character, on top of the parsed document.
+pub(crate) fn parse_p21_entity(input: &str) -> Result<EntityInstance, ParseError> {
+    let mut parser = Parser::new(input, FileFormat::P21, true);
+    let entity = parser.parse_entity_instance(true, None)?;
+    parser.skip_ws();
+    if !parser.is_eof() {
+        return Err(parser.error_here("Unexpected trailing data after record"));
+    }
+    Ok(entity)
+}
+
 pub fn parse_sfc_text(input: &str, strict: bool) -> Result<ParseOutput, ParseError> {
     Parser::new(input, FileFormat::Sfc, strict).parse()
 }

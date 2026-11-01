@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- P21 output is written record by record, each checked against its own parse,
+  instead of building the whole AP202 graph and parsing the finished text back as
+  one document. The SFC is no longer re-encoded and reparsed first either. A 96
+  sheet drawing set (130 MB of P21) went from 4.3 GB to under 2 GB peak; the output
+  bytes are unchanged.
 - `SfcDocument.to_bytes` no longer reparses a document it already validated, and
   batches no longer clone `typed_features` and `model` or keep their inputs while
   validating. A 256,000 entity drawing went from 3.5 GB to 1.9 GB peak.

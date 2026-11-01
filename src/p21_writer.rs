@@ -3,8 +3,8 @@
 //! External dependencies are allowed only by the validated bundle writer.
 use crate::editor::{record, string};
 use crate::model::*;
-use crate::writer::{serialize_sfc, SfcWriteOptions, WriteError};
-use std::collections::BTreeMap;
+use crate::writer::{serialize_validated, SfcWriteOptions, WriteError};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 #[path = "p21_annotations.rs"]
@@ -72,9 +72,23 @@ fn measure(keyword: &str, value: f64) -> Value {
     }
 }
 
+/// The AP202 entity graph, written out as it is built.
+///
+/// Entities are kept only until [`Graph::flush`], which appends them to `text`
+/// and checks each record by parsing it back. A feature may still patch the
+/// entities it created (dimension callouts, symbol styles), so `generate`
+/// flushes between features, never inside one. Holding the whole graph and
+/// parsing the finished text back as one document cost four times the output
+/// size on top of the graph itself, 2.7 GB for a 130 MB drawing set.
 #[derive(Default)]
 struct Graph {
-    entities: Vec<EntityInstance>,
+    text: String,
+    written: i64,
+    pending: Vec<EntityInstance>,
+    /// CIRCLE and ELLIPSE records, which a composite boundary wraps in a trim.
+    conics: BTreeSet<i64>,
+    /// PRESENTATION_STYLE_ASSIGNMENT id to its CURVE_STYLE id.
+    curve_styles: BTreeMap<i64, i64>,
     items: BTreeMap<i64, i64>,
     maps: BTreeMap<i64, i64>,
     curves: BTreeMap<i64, i64>,
@@ -118,13 +132,33 @@ impl Graph {
         }
     }
     fn push(&mut self, body: EntityBody) -> i64 {
-        let id = self.entities.len() as i64 + 1;
-        self.entities.push(EntityInstance {
+        let id = self.written + self.pending.len() as i64 + 1;
+        self.pending.push(EntityInstance {
             id,
             sfc_version: None,
             body,
         });
         id
+    }
+    /// An entity the current feature created; flushed entities are final.
+    fn entity(&self, id: i64) -> &EntityBody {
+        let index = id - 1 - self.written;
+        assert!(index >= 0, "P21 entity #{id} was already written");
+        &self.pending[index as usize].body
+    }
+    fn entity_mut(&mut self, id: i64) -> &mut EntityBody {
+        let index = id - 1 - self.written;
+        assert!(index >= 0, "P21 entity #{id} was already written");
+        &mut self.pending[index as usize].body
+    }
+    /// Write the pending entities out, each checked against its own parse.
+    fn flush(&mut self) -> Result<(), WriteError> {
+        for entity in &mut self.pending {
+            emit_entity(&mut self.text, entity)?;
+        }
+        self.written += self.pending.len() as i64;
+        self.pending.clear();
+        Ok(())
     }
     fn add(&mut self, keyword: &str, parameters: Vec<Value>) -> i64 {
         self.push(EntityBody::Simple(record(keyword, parameters)))
@@ -203,6 +237,7 @@ impl Graph {
             vec![references(&[curve_style])],
         );
         self.styles.insert(key, assignment);
+        self.curve_styles.insert(assignment, curve_style);
         Ok(assignment)
     }
     fn curve(&mut self, feature: &TypedFeature) -> Result<i64, WriteError> {
@@ -292,10 +327,12 @@ impl Graph {
             }
             TypedFeature::Circle(circle) => {
                 let axis = self.axis(&circle.center, 0.0);
-                self.add(
+                let id = self.add(
                     "CIRCLE",
                     vec![string(""), reference(axis), real(circle.radius)],
-                )
+                );
+                self.conics.insert(id);
+                id
             }
             TypedFeature::Arc(arc) => {
                 let axis = self.axis(&arc.center, 0.0);
@@ -323,7 +360,7 @@ impl Graph {
             }
             TypedFeature::Ellipse(ellipse) => {
                 let axis = self.axis(&ellipse.center, ellipse.rotation_angle_deg);
-                self.add(
+                let id = self.add(
                     "ELLIPSE",
                     vec![
                         string(""),
@@ -331,7 +368,9 @@ impl Graph {
                         real(ellipse.radius_x),
                         real(ellipse.radius_y),
                     ],
-                )
+                );
+                self.conics.insert(id);
+                id
             }
             TypedFeature::EllipseArc(arc) => {
                 let axis = self.axis(&arc.center, arc.rotation_angle_deg);
@@ -464,7 +503,14 @@ fn generate(
     file_name: Option<&str>,
     drop_unsupported: bool,
 ) -> Result<P21Export, WriteError> {
-    serialize_sfc(
+    if !output.warnings.is_empty() {
+        return Err(error(
+            "Cannot convert an SFC parse result containing warnings",
+        ));
+    }
+    // Checks the parameters and the Shift-JIS spelling of the SFC without
+    // parsing its text back, which would hold a second copy of a large drawing.
+    serialize_validated(
         output,
         SfcWriteOptions {
             allow_external_references,
@@ -556,7 +602,29 @@ fn generate(
             )));
         }
     }
+    let mut header = document.header.clone();
+    for record in &mut header.entities {
+        if record.keyword.eq_ignore_ascii_case("FILE_DESCRIPTION") {
+            record.parameters = vec![
+                Value::List(vec![string("SCADEC level2 AP202_mode")]),
+                string("1"),
+            ];
+        }
+        if record.keyword.eq_ignore_ascii_case("FILE_NAME") {
+            let filename = record.parameters[0]
+                .as_string()
+                .ok_or_else(|| error("Invalid FILE_NAME"))?;
+            let filename = file_name.map(str::to_owned).unwrap_or_else(|| {
+                std::path::Path::new(&filename)
+                    .with_extension("p21")
+                    .to_string_lossy()
+                    .into_owned()
+            });
+            record.parameters[0] = string(filename);
+        }
+    }
     let mut graph = Graph::default();
+    begin_document(&mut graph.text, &mut header)?;
     let angle_unit = graph.complex(vec![
         record("NAMED_UNIT", vec![Value::Omitted]),
         record("PLANE_ANGLE_UNIT", vec![]),
@@ -764,6 +832,9 @@ fn generate(
         )
         .collect();
     for feature in &document.typed_features {
+        // Everything before this feature is final: dimensions and symbols only
+        // patch the entities of their own feature.
+        graph.flush()?;
         let source_id = feature.id;
         if dropped.contains_key(&source_id) {
             continue;
@@ -1013,33 +1084,14 @@ fn generate(
             vec![reference(assignment), reference(sheet_id)],
         );
     }
-    let mut header = document.header.clone();
-    for record in &mut header.entities {
-        if record.keyword.eq_ignore_ascii_case("FILE_DESCRIPTION") {
-            record.parameters = vec![
-                Value::List(vec![string("SCADEC level2 AP202_mode")]),
-                string("1"),
-            ];
-        }
-        if record.keyword.eq_ignore_ascii_case("FILE_NAME") {
-            let filename = record.parameters[0]
-                .as_string()
-                .ok_or_else(|| error("Invalid FILE_NAME"))?;
-            let filename = file_name.map(str::to_owned).unwrap_or_else(|| {
-                std::path::Path::new(&filename)
-                    .with_extension("p21")
-                    .to_string_lossy()
-                    .into_owned()
-            });
-            record.parameters[0] = string(filename);
-        }
-    }
+    graph.flush()?;
+    graph.text.push_str("ENDSEC;\r\nEND-ISO-10303-21;\r\n");
     let report = document
         .typed_features
         .iter()
         .filter_map(|f| dropped.get(&f.id).map(|reason| (f.id, reason.clone())))
         .collect();
-    Ok((encode_graph(header, graph.entities)?, report))
+    Ok((graph.text.into_bytes(), report))
 }
 
 fn step_string(value: &str) -> Result<String, WriteError> {
@@ -1072,56 +1124,60 @@ fn prepare(value: &mut Value) -> Result<(), WriteError> {
     }
     Ok(())
 }
-fn encode_graph(
-    mut header: HeaderSection,
-    mut entities: Vec<EntityInstance>,
-) -> Result<Vec<u8>, WriteError> {
-    let mut text = String::from("ISO-10303-21;\r\nHEADER;\r\n");
-    let emit_record = |text: &mut String, record: &mut Record| -> Result<(), WriteError> {
-        for value in &mut record.parameters {
-            prepare(value)?;
-        }
-        text.push_str(&record.keyword);
-        text.push('(');
-        // Strings already have standard STEP escapes; emit_values doubles '\\',
-        // so restore their single spelling after emitting the whole record.
-        let mut parameters = String::new();
-        crate::writer::emit_values(&mut parameters, &record.parameters, false, false, 0)?;
-        text.push_str(&parameters.replace("\\\\", "\\"));
-        text.push(')');
-        Ok(())
-    };
+/// The header section and the start of DATA; the entities follow flush by flush.
+fn begin_document(text: &mut String, header: &mut HeaderSection) -> Result<(), WriteError> {
+    text.push_str("ISO-10303-21;\r\nHEADER;\r\n");
     for record in &mut header.entities {
-        emit_record(&mut text, record)?;
+        let start = text.len();
+        emit_record(text, record)?;
         text.push_str(";\r\n");
+        // Header records have no id; check them through the entity parser.
+        let parsed = crate::parser::parse_p21_entity(&format!("#1={}", &text[start..]))
+            .map_err(|e| error(format!("P21 output validation failed: {e}")))?;
+        if parsed.body != EntityBody::Simple(record.clone()) {
+            return Err(error("P21 output changed header values"));
+        }
     }
     text.push_str("ENDSEC;\r\nDATA;\r\n");
-    for entity in &mut entities {
-        write!(text, "#{}=", entity.id).unwrap();
-        match &mut entity.body {
-            EntityBody::Simple(record) => emit_record(&mut text, record)?,
-            EntityBody::Complex(records) => {
-                text.push('(');
-                for record in records {
-                    emit_record(&mut text, record)?;
-                }
-                text.push(')');
+    Ok(())
+}
+
+fn emit_record(text: &mut String, record: &mut Record) -> Result<(), WriteError> {
+    for value in &mut record.parameters {
+        prepare(value)?;
+    }
+    text.push_str(&record.keyword);
+    text.push('(');
+    // Strings already have standard STEP escapes; emit_values doubles '\\',
+    // so restore their single spelling after emitting the whole record.
+    let mut parameters = String::new();
+    crate::writer::emit_values(&mut parameters, &record.parameters, false, false, 0)?;
+    text.push_str(&parameters.replace("\\\\", "\\"));
+    text.push(')');
+    Ok(())
+}
+
+/// Append one entity and check that its text parses back to the same values.
+fn emit_entity(text: &mut String, entity: &mut EntityInstance) -> Result<(), WriteError> {
+    let start = text.len();
+    write!(text, "#{}=", entity.id).unwrap();
+    match &mut entity.body {
+        EntityBody::Simple(record) => emit_record(text, record)?,
+        EntityBody::Complex(records) => {
+            text.push('(');
+            for record in records {
+                emit_record(text, record)?;
             }
+            text.push(')');
         }
-        text.push_str(";\r\n");
     }
-    text.push_str("ENDSEC;\r\nEND-ISO-10303-21;\r\n");
-    let parsed = crate::parser::parse_from_bytes(FileFormat::P21, text.as_bytes(), true)
+    text.push_str(";\r\n");
+    let parsed = crate::parser::parse_p21_entity(&text[start..])
         .map_err(|e| error(format!("P21 output validation failed: {e}")))?;
-    if !parsed.warnings.is_empty()
-        || parsed.document.entities != entities
-        || parsed.document.header != header
-    {
-        return Err(error(
-            "P21 output changed entity/header values or has warnings",
-        ));
+    if parsed != *entity {
+        return Err(error("P21 output changed entity values"));
     }
-    Ok(text.into_bytes())
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1183,6 +1239,56 @@ mod tests {
         assert!(String::from_utf8(bytes)
             .unwrap()
             .contains("$$SXF_G_$$ATRS$$"));
+    }
+    #[test]
+    fn streamed_output_reads_back_as_the_same_document() {
+        let mut doc =
+            crate::SfcDocument::new("drawing.sfc", "drawing", 297, 210, "2026-10-07").unwrap();
+        doc.add_element(
+            "text_string_feature",
+            vec![
+                Value::Integer(1),
+                Value::Integer(1),
+                Value::Integer(1),
+                string("見出し\\'quoted\\'"),
+                real(10.0),
+                real(20.0),
+                real(3.0),
+                real(15.0),
+                real(0.0),
+                real(0.0),
+                real(0.0),
+                Value::Integer(1),
+                Value::Integer(1),
+            ],
+        )
+        .unwrap();
+        doc.add_feature(
+            "linear_dimension",
+            &BTreeMap::from([
+                ("end_x".into(), real(20.0)),
+                ("text_present".into(), Value::Integer(0)),
+            ]),
+        )
+        .unwrap();
+        let bytes = serialize_p21(doc.snapshot()).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        // The whole file still parses as a P21 document, without salvage.
+        let parsed = crate::parser::parse_p21_text(&text, true).unwrap();
+        assert!(parsed.warnings.is_empty());
+        let records = text.matches("\r\n#").count();
+        assert_eq!(parsed.document.entities.len(), records);
+        assert_eq!(parsed.document.entities.last().unwrap().id, records as i64);
+        assert!(text.contains("\\X2\\"));
+        assert!(text.ends_with("ENDSEC;\r\nEND-ISO-10303-21;\r\n"));
+    }
+    #[test]
+    fn one_record_check_rejects_anything_else_on_the_line() {
+        let entity =
+            crate::parser::parse_p21_entity("#7=CARTESIAN_POINT('',(1.,2.));\r\n").unwrap();
+        assert_eq!(entity.id, 7);
+        assert!(crate::parser::parse_p21_entity("#7=CARTESIAN_POINT('',(1.,2.));#8=").is_err());
+        assert!(crate::parser::parse_p21_entity("#7=CARTESIAN_POINT('',(1.,2.))").is_err());
     }
     #[test]
     fn dimensions_keep_callouts_and_omission_flags() {

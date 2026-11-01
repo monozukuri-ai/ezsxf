@@ -3,14 +3,14 @@ use super::*;
 
 impl Graph {
     fn add_record(&mut self, id: i64, value: Record) {
-        let EntityBody::Complex(records) = &mut self.entities[(id - 1) as usize].body else {
+        let EntityBody::Complex(records) = self.entity_mut(id) else {
             unreachable!()
         };
         records.push(value);
         records.sort_by(|a, b| a.keyword.cmp(&b.keyword));
     }
     fn set_name(&mut self, id: i64, name: &str) {
-        let EntityBody::Complex(records) = &mut self.entities[(id - 1) as usize].body else {
+        let EntityBody::Complex(records) = self.entity_mut(id) else {
             unreachable!()
         };
         records
@@ -128,7 +128,7 @@ impl Graph {
                     parameters: vec![enumeration("NULL")],
                 }])],
             );
-            let EntityBody::Complex(records) = &mut self.entities[(id - 1) as usize].body else {
+            let EntityBody::Complex(records) = self.entity_mut(id) else {
                 unreachable!()
             };
             records
@@ -372,9 +372,7 @@ impl Graph {
                 // SXF stores the extension's measurement base in LINE.pnt,
                 // independently of the visible Cartesian trim endpoints.
                 // Using (0,0) here collapses native linear-dimension bases.
-                let EntityBody::Complex(occurrence) =
-                    &self.entities[(projection - 1) as usize].body
-                else {
+                let EntityBody::Complex(occurrence) = self.entity(projection) else {
                     unreachable!()
                 };
                 let Value::Reference(trimmed) = occurrence
@@ -385,16 +383,14 @@ impl Graph {
                 else {
                     unreachable!()
                 };
-                let EntityBody::Simple(trimmed) = &self.entities[(trimmed - 1) as usize].body
-                else {
+                let EntityBody::Simple(trimmed) = self.entity(trimmed) else {
                     unreachable!()
                 };
                 let Value::Reference(basis_id) = trimmed.parameters[1] else {
                     unreachable!()
                 };
                 let base = self.point(&extension.base);
-                let EntityBody::Simple(basis) = &mut self.entities[(basis_id - 1) as usize].body
-                else {
+                let EntityBody::Simple(basis) = self.entity_mut(basis_id) else {
                     unreachable!()
                 };
                 basis.parameters[1] = reference(base);

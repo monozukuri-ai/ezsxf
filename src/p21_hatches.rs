@@ -16,8 +16,7 @@ impl Graph {
         let mut segments = Vec::new();
         for child in &definition.component_ids {
             let mut geometry = lookup(&self.curves, *child, "boundary curve")?;
-            if matches!(&self.entities[(geometry-1) as usize].body, EntityBody::Simple(r) if matches!(r.keyword.as_str(), "CIRCLE" | "ELLIPSE"))
-            {
+            if self.conics.contains(&geometry) {
                 geometry = self.add(
                     "TRIMMED_CURVE",
                     vec![
@@ -143,16 +142,7 @@ impl Graph {
                         line_width_code: Some(pattern.line_width_code),
                         ..CommonStyle::default()
                     })?;
-                    let EntityBody::Simple(r) = &self.entities[(assignment - 1) as usize].body
-                    else {
-                        unreachable!()
-                    };
-                    let Value::List(values) = &r.parameters[0] else {
-                        unreachable!()
-                    };
-                    let Value::Reference(curve_style) = values[0] else {
-                        unreachable!()
-                    };
+                    let curve_style = self.curve_styles[&assignment];
                     let start = self.point(&pattern.start);
                     let vector = self.vector(pattern.spacing, pattern.angle_deg + 90.0);
                     let repeat = self.add(
