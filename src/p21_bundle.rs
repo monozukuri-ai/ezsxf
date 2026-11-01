@@ -37,29 +37,39 @@ impl SfcDocument {
         if !name.to_ascii_lowercase().ends_with(".p21") {
             return Err(invalid("P21 drawing filename must end in .p21"));
         }
-        // Reuse SFC dependency/SAF-ID/image validation before constructing AP202.
         let sfc_name = Path::new(&name)
             .with_extension("sfc")
             .to_string_lossy()
             .into_owned();
-        let (_, mut files) = self.prepare_sfc_files(Some(&sfc_name), SfcWriteOptions::default())?;
-        let source_bytes = files.remove(&sfc_name).unwrap();
-        let output = crate::parser::parse_from_bytes(FileFormat::Sfc, &source_bytes, true)
-            .map_err(invalid)?;
         let saf_name = Path::new(&name)
             .with_extension("SAF")
             .to_string_lossy()
             .into_owned();
-        if let Some(bytes) = files.get_mut(&saf_name) {
-            *bytes = self
-                .saf
-                .as_ref()
-                .unwrap()
-                .to_bytes(&name)
+        let reparsed;
+        let (output, mut files) = if let Some(saf) = &self.saf {
+            // The SAF renames the drawing's ATRF references after the delivered
+            // name, so AP202 is built from the renamed SFC, parsed back.
+            let (_, mut files) =
+                self.prepare_sfc_files(Some(&sfc_name), SfcWriteOptions::default())?;
+            let source_bytes = files.remove(&sfc_name).unwrap();
+            reparsed = crate::parser::parse_from_bytes(FileFormat::Sfc, &source_bytes, true)
                 .map_err(invalid)?;
-        }
+            if let Some(bytes) = files.get_mut(&saf_name) {
+                *bytes = saf.to_bytes(&name).map_err(invalid)?;
+            }
+            (&reparsed, files)
+        } else {
+            // Images and files only: the committed document is the AP202 source as
+            // it stands. Emitting the SFC and parsing it back would hold a second
+            // copy of a large drawing, four bytes per character.
+            let sfc_name = self.bundle_drawing_name(Some(&sfc_name), "sfc")?;
+            (
+                self.snapshot(),
+                self.dependency_files(&sfc_name, &saf_name)?,
+            )
+        };
         let drawing =
-            serialize_p21_with_dependencies(&output, true, Some(&name)).map_err(invalid)?;
+            serialize_p21_with_dependencies(output, true, Some(&name)).map_err(invalid)?;
         if files.insert(name.clone(), drawing).is_some() {
             return Err(invalid("Dependency collides with P21"));
         }

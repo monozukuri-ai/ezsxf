@@ -195,15 +195,26 @@ fn reject_external_references(
     Ok(())
 }
 
-fn emit_document(
+pub(crate) fn emit_document(
     document: &ParsedDocument,
     options: SfcWriteOptions,
 ) -> Result<Vec<u8>, WriteError> {
     if document.format != FileFormat::Sfc {
         return Err(fail("SFC serialization requires an SFC document"));
     }
+    emit_sfc_text(&document.header, &document.entities, options)
+}
+
+/// The SFC bytes of a header and its entities, each parameter checked as it is
+/// written. Takes the parts rather than a `ParsedDocument` so that a bundle can
+/// swap the header's FILE_NAME without cloning a large drawing's entities.
+pub(crate) fn emit_sfc_text(
+    header: &HeaderSection,
+    entities: &[EntityInstance],
+    options: SfcWriteOptions,
+) -> Result<Vec<u8>, WriteError> {
     let mut text = String::from("ISO-10303-21;\r\nHEADER;\r\n");
-    for record in &document.header.entities {
+    for record in &header.entities {
         keyword(&record.keyword)?;
         text.push_str(&record.keyword);
         text.push('(');
@@ -211,7 +222,7 @@ fn emit_document(
         text.push_str(");\r\n");
     }
     text.push_str("ENDSEC;\r\nDATA;\r\n");
-    for entity in &document.entities {
+    for entity in entities {
         if entity.id < 0 {
             return Err(fail(format!("Invalid SFC entity ID #{}", entity.id)));
         }

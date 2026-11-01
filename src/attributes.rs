@@ -513,65 +513,41 @@ impl SfcDocument {
         crate::bundle::publish_bundle(destination, &name, &files)
     }
 
-    pub(crate) fn prepare_sfc_files(
+    /// The validated name of the drawing a bundle delivers: the given name or
+    /// the document's own, portable and ending in `.extension`.
+    pub(crate) fn bundle_drawing_name(
         &self,
         file_name: Option<&str>,
-        mut options: SfcWriteOptions,
-    ) -> std::io::Result<(String, BTreeMap<String, Vec<u8>>)> {
-        options.allow_external_references = true;
-        self.validate_links()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?;
+        extension: &str,
+    ) -> std::io::Result<String> {
         let invalid =
             |e: WriteError| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string());
-        let name = file_name.unwrap_or(self.drawing_name().map_err(invalid)?);
-        crate::bundle::portable_name(name)?;
-        if !name.to_ascii_lowercase().ends_with(".sfc") {
-            return Err(invalid(error("Drawing filename must end in .sfc")));
+        self.validate_links().map_err(invalid)?;
+        let name = file_name
+            .unwrap_or(self.drawing_name().map_err(invalid)?)
+            .to_owned();
+        crate::bundle::portable_name(&name)?;
+        if !name
+            .to_ascii_lowercase()
+            .ends_with(&format!(".{extension}"))
+        {
+            return Err(invalid(error(format!(
+                "Drawing filename must end in .{extension}"
+            ))));
         }
-        let saf_name = Path::new(name)
-            .with_extension("SAF")
-            .to_str()
-            .unwrap()
-            .to_string();
-        let mut document = self.output.document.clone();
-        document
-            .header
-            .entities
-            .iter_mut()
-            .find(|r| r.keyword.eq_ignore_ascii_case("FILE_NAME"))
-            .unwrap()
-            .parameters[0] = string(name);
-        let replacements: BTreeMap<_, _> = document
-            .sfc_model
-            .as_ref()
-            .unwrap()
-            .attribute_attachments
-            .iter()
-            .filter_map(|a| match &a.mechanism {
-                SfcAttributeMechanism::AttributeFile { figure_id, .. } => {
-                    Some((a.name.clone(), format!("$$ATRF$${figure_id}$${saf_name}")))
-                }
-                _ => None,
-            })
-            .collect();
-        for e in &mut document.entities {
-            if let EntityBody::Simple(r) = &mut e.body {
-                let field = if r.keyword.eq_ignore_ascii_case("sfig_org_feature") {
-                    Some(0)
-                } else if r.keyword.eq_ignore_ascii_case("sfig_locate_feature") {
-                    Some(1)
-                } else {
-                    None
-                };
-                if let Some(field) = field {
-                    if let Value::String(value) = &mut r.parameters[field] {
-                        if let Some(new) = replacements.get(value) {
-                            *value = new.clone();
-                        }
-                    }
-                }
-            }
-        }
+        Ok(name)
+    }
+
+    /// The files a bundle delivers beside the drawing: every image and file that
+    /// a `画像` / `ファイル名` attribute or the SAF names, and the SAF itself as
+    /// `saf_name` (naming `drawing_name` as its `sxfFile`).
+    pub(crate) fn dependency_files(
+        &self,
+        drawing_name: &str,
+        saf_name: &str,
+    ) -> std::io::Result<BTreeMap<String, Vec<u8>>> {
+        let invalid =
+            |e: WriteError| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string());
         let mut files = BTreeMap::new();
         let mut required = self
             .saf
@@ -612,17 +588,88 @@ impl SfcDocument {
         }
         if let Some(saf) = &self.saf {
             if files
-                .insert(saf_name, saf.to_bytes(name).map_err(invalid)?)
+                .insert(
+                    saf_name.to_owned(),
+                    saf.to_bytes(drawing_name).map_err(invalid)?,
+                )
                 .is_some()
             {
                 return Err(invalid(error("Dependency collides with SAF")));
             }
         }
-        let (bytes, _) = encode_document(&document, options).map_err(invalid)?;
-        if files.insert(name.into(), bytes).is_some() {
+        Ok(files)
+    }
+
+    pub(crate) fn prepare_sfc_files(
+        &self,
+        file_name: Option<&str>,
+        mut options: SfcWriteOptions,
+    ) -> std::io::Result<(String, BTreeMap<String, Vec<u8>>)> {
+        options.allow_external_references = true;
+        let invalid =
+            |e: WriteError| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string());
+        let name = self.bundle_drawing_name(file_name, "sfc")?;
+        let saf_name = Path::new(&name)
+            .with_extension("SAF")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let mut files = self.dependency_files(&name, &saf_name)?;
+        let mut header = self.output.document.header.clone();
+        header
+            .entities
+            .iter_mut()
+            .find(|r| r.keyword.eq_ignore_ascii_case("FILE_NAME"))
+            .unwrap()
+            .parameters[0] = string(&name);
+        let replacements: BTreeMap<_, _> = self
+            .output
+            .document
+            .sfc_model
+            .as_ref()
+            .unwrap()
+            .attribute_attachments
+            .iter()
+            .filter_map(|a| match &a.mechanism {
+                SfcAttributeMechanism::AttributeFile { figure_id, .. } => {
+                    Some((a.name.clone(), format!("$$ATRF$${figure_id}$${saf_name}")))
+                }
+                _ => None,
+            })
+            .collect();
+        let bytes = if replacements.is_empty() && !options.literal_backslashes {
+            // Only the header changes: emit the committed entities as they are. A
+            // clone plus the reparse of the emitted text would cost several times
+            // the size of a large drawing.
+            crate::writer::emit_sfc_text(&header, &self.output.document.entities, options)
+                .map_err(invalid)?
+        } else {
+            let mut document = self.output.document.clone();
+            document.header = header;
+            for e in &mut document.entities {
+                if let EntityBody::Simple(r) = &mut e.body {
+                    let field = if r.keyword.eq_ignore_ascii_case("sfig_org_feature") {
+                        Some(0)
+                    } else if r.keyword.eq_ignore_ascii_case("sfig_locate_feature") {
+                        Some(1)
+                    } else {
+                        None
+                    };
+                    if let Some(field) = field {
+                        if let Value::String(value) = &mut r.parameters[field] {
+                            if let Some(new) = replacements.get(value) {
+                                *value = new.clone();
+                            }
+                        }
+                    }
+                }
+            }
+            encode_document(&document, options).map_err(invalid)?.0
+        };
+        if files.insert(name.clone(), bytes).is_some() {
             return Err(invalid(error("Dependency collides with SFC")));
         }
-        Ok((name.into(), files))
+        Ok((name, files))
     }
 }
 

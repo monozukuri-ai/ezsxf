@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Bundles no longer clone and reparse a large drawing. `save_bundle` emits the
+  committed entities under the delivered header (a clone plus a reparse of the
+  emitted SFC cost several times the drawing), and `to_p2z_bytes` /
+  `save_p21_bundle` build AP202 from the document itself when there is no SAF.
+  A drawing with a SAF keeps the renamed-SFC route, since its ATRF references
+  take the delivered name.
 - P21 output is written record by record, each checked against its own parse,
   instead of building the whole AP202 graph and parsing the finished text back as
   one document. The SFC is no longer re-encoded and reparsed first either. A 96
