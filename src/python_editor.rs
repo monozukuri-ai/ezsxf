@@ -107,14 +107,13 @@ fn flat_points(value: &Bound<'_, PyAny>) -> PyResult<Option<Value>> {
         return Err(PyValueError::new_err("A points array must hold x, y pairs"));
     }
     let coordinate = |b: &[u8]| f64::from_ne_bytes(b.try_into().expect("eight bytes"));
+    let (pairs, _) = bytes.as_chunks::<16>();
     Ok(Some(Value::List(
-        bytes
-            .chunks_exact(16)
+        pairs
+            .iter()
             .map(|pair| {
-                Value::List(vec![
-                    Value::Real(coordinate(&pair[..8])),
-                    Value::Real(coordinate(&pair[8..])),
-                ])
+                let (x, y) = pair.split_at(8);
+                Value::List(vec![Value::Real(coordinate(x)), Value::Real(coordinate(y))])
             })
             .collect(),
     )))
