@@ -3,7 +3,7 @@
 //! External dependencies are allowed only by the validated bundle writer.
 use crate::editor::{record, string};
 use crate::model::*;
-use crate::writer::{serialize_validated, SfcWriteOptions, WriteError};
+use crate::writer::{serialize_validated, Pieces, SfcWriteOptions, WriteError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
@@ -83,6 +83,8 @@ fn measure(keyword: &str, value: f64) -> Value {
 #[derive(Default)]
 struct Graph {
     text: String,
+    /// Earlier parts of the text, taken after a flush once `text` is full.
+    pieces: Pieces,
     written: i64,
     pending: Vec<EntityInstance>,
     /// CIRCLE and ELLIPSE records, which a composite boundary wraps in a trim.
@@ -158,6 +160,7 @@ impl Graph {
         }
         self.written += self.pending.len() as i64;
         self.pending.clear();
+        self.pieces.take_full_text(&mut self.text);
         Ok(())
     }
     fn add(&mut self, keyword: &str, parameters: Vec<Value>) -> i64 {
@@ -1091,7 +1094,7 @@ fn generate(
         .iter()
         .filter_map(|f| dropped.get(&f.id).map(|reason| (f.id, reason.clone())))
         .collect();
-    Ok((graph.text.into_bytes(), report))
+    Ok((graph.pieces.join(graph.text.into_bytes()), report))
 }
 
 fn step_string(value: &str) -> Result<String, WriteError> {

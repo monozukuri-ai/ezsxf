@@ -1816,15 +1816,48 @@ fn reparse_against_expected_entities_keeps_them_or_gives_them_back() {
 
 #[test]
 fn output_moves_to_python_in_pieces_from_the_end() {
-    let source: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
-    for piece in [1, 7, 999, 1000, 4096] {
-        let mut target = vec![0u8; source.len()];
-        // SAFETY: `target` holds `source.len()` bytes.
-        unsafe { crate::python_writer::move_from_end(source.clone(), target.as_mut_ptr(), piece) };
-        assert_eq!(target, source, "piece {piece}");
+    // Short sources and pieces, and a source of several pages whose copied
+    // pages are given back while later (earlier) pieces are still to be read.
+    for (len, pieces) in [
+        (1000, vec![1, 7, 999, 1000, 4096]),
+        (300_001, vec![4096, 65_537]),
+    ] {
+        let source: Vec<u8> = (0..=250u8).cycle().take(len).collect();
+        for piece in pieces {
+            let mut target = vec![0u8; source.len()];
+            // SAFETY: `target` holds `source.len()` bytes.
+            unsafe {
+                crate::python_writer::move_from_end(source.clone(), target.as_mut_ptr(), piece)
+            };
+            assert!(target == source, "length {len}, piece {piece}");
+        }
     }
     // SAFETY: nothing is written for an empty source.
     unsafe {
         crate::python_writer::move_from_end(Vec::new(), std::ptr::NonNull::dangling().as_ptr(), 7)
     };
+}
+
+#[test]
+fn pieces_join_back_to_what_was_written() {
+    let mut pieces = crate::writer::Pieces::default();
+    let mut current = Vec::new();
+    let mut expected = Vec::new();
+    for i in 0..3000usize {
+        let chunk: Vec<u8> = (0..4000 + i % 97).map(|j| (i * 31 + j) as u8).collect();
+        current.extend_from_slice(&chunk);
+        expected.extend_from_slice(&chunk);
+        pieces.take_full(&mut current);
+    }
+    assert!(pieces.join(current) == expected);
+
+    let mut pieces = crate::writer::Pieces::default();
+    let (mut text, mut expected) = (String::new(), String::new());
+    for i in 0..2000 {
+        let line = format!("#{i}=LINE('{}');\r\n", "あ".repeat(800 + i % 13));
+        text.push_str(&line);
+        expected.push_str(&line);
+        pieces.take_full_text(&mut text);
+    }
+    assert!(pieces.join(text.into_bytes()) == expected.into_bytes());
 }

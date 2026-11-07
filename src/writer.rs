@@ -330,6 +330,78 @@ pub(crate) fn emit_sfc_text(
     out.finish()
 }
 
+/// Output written in pieces of about `Pieces::SIZE` and joined once at the end.
+///
+/// A single growing `Vec` doubles and copies its buffer each time; once a large
+/// drawing has left free space in the heap the buffer grows there, and every
+/// old copy stays resident (a 291 MB P21 peaked at more than twice its size).
+#[derive(Default)]
+pub(crate) struct Pieces {
+    done: Vec<Vec<u8>>,
+    len: usize,
+}
+
+impl Pieces {
+    const SIZE: usize = 4 << 20;
+
+    /// Takes `piece` once it holds `SIZE` bytes, leaving room for the next one.
+    pub(crate) fn take_full(&mut self, piece: &mut Vec<u8>) {
+        if piece.len() >= Self::SIZE {
+            self.len += piece.len();
+            let next = Vec::with_capacity(Self::SIZE + Self::SIZE / 8);
+            self.done.push(std::mem::replace(piece, next));
+        }
+    }
+
+    /// `take_full` for text.
+    pub(crate) fn take_full_text(&mut self, text: &mut String) {
+        if text.len() >= Self::SIZE {
+            self.len += text.len();
+            let next = String::with_capacity(Self::SIZE + Self::SIZE / 8);
+            self.done.push(std::mem::replace(text, next).into_bytes());
+        }
+    }
+
+    /// The pieces and then `last` as one buffer. Each piece is given back as
+    /// soon as it is copied, so the output is not held twice.
+    pub(crate) fn join(self, mut last: Vec<u8>) -> Vec<u8> {
+        if self.done.is_empty() {
+            return last;
+        }
+        let mut out = Vec::with_capacity(self.len + last.len());
+        for mut piece in self.done.into_iter().chain([std::mem::take(&mut last)]) {
+            out.extend_from_slice(&piece);
+            // SAFETY: the piece is ours and dropped unread.
+            unsafe { release_pages(piece.as_mut_ptr(), piece.len()) };
+        }
+        out
+    }
+}
+
+/// Gives the whole pages within `len` bytes at `start` back to the system; they
+/// read as zeros afterwards. Only on Linux, where `MADV_DONTNEED` does that; a
+/// buffer in the heap keeps its pages when it is shrunk or freed.
+///
+/// # Safety
+/// The bytes must belong to the caller and not be read again.
+pub(crate) unsafe fn release_pages(start: *mut u8, len: usize) {
+    #[cfg(target_os = "linux")]
+    {
+        let page = libc::sysconf(libc::_SC_PAGESIZE).max(1) as usize;
+        let first = (start as usize).next_multiple_of(page);
+        let last = (start as usize + len) / page * page;
+        if last > first {
+            libc::madvise(
+                first as *mut libc::c_void,
+                last - first,
+                libc::MADV_DONTNEED,
+            );
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (start, len);
+}
+
 /// Shift-JIS bytes of SFC text that arrives in pieces, so that a large drawing
 /// is never held as one string, nor as its decoded copy for the check. Every
 /// piece ends with an ASCII line break and Shift-JIS keeps no state between
@@ -339,6 +411,7 @@ pub(crate) fn emit_sfc_text(
 #[derive(Default)]
 struct ShiftJisText {
     bytes: Vec<u8>,
+    pieces: Pieces,
     unmappable: bool,
     changed: bool,
 }
@@ -351,6 +424,7 @@ impl ShiftJisText {
         let (decoded, had_errors) = SHIFT_JIS.decode_without_bom_handling(&bytes);
         self.changed |= had_errors || decoded != text.as_str();
         self.bytes.extend_from_slice(&bytes);
+        self.pieces.take_full(&mut self.bytes);
         text.clear();
     }
 
@@ -363,7 +437,7 @@ impl ShiftJisText {
         if self.changed {
             return Err(fail("Shift-JIS encoding would change SFC character values"));
         }
-        Ok(self.bytes)
+        Ok(self.pieces.join(self.bytes))
     }
 }
 

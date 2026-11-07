@@ -184,9 +184,8 @@ pub(crate) fn encode_python(
 
 /// `bytes` as a Python `bytes` object without holding two whole copies of a
 /// large output. The object is filled from the end, a piece at a time, and
-/// `bytes` gives each piece back once it is copied: a large `Vec` is a mapping
-/// of its own, so shrinking it returns the pages, and the part of the new
-/// object not yet written takes no memory.
+/// `bytes` gives each piece back once it is copied (see `move_from_end`); the
+/// part of the new object not yet written takes no memory.
 pub(crate) fn into_python_bytes(py: Python<'_>, bytes: Vec<u8>) -> PyResult<Py<PyBytes>> {
     // SAFETY: with a null pointer, PyBytes_FromStringAndSize returns a new,
     // uninitialised object of `bytes.len()` bytes; every byte is written before
@@ -200,8 +199,13 @@ pub(crate) fn into_python_bytes(py: Python<'_>, bytes: Vec<u8>) -> PyResult<Py<P
     }
 }
 
-/// Copies `bytes` to `target` from the end, `piece` bytes at a time, shrinking
-/// `bytes` after each piece.
+/// Copies `bytes` to `target` from the end, `piece` bytes at a time, giving
+/// each copied piece of `bytes` back to the system.
+///
+/// On Linux the whole pages of a copied piece are released with `madvise`:
+/// a large output often sits in the main heap rather than in a mapping of its
+/// own, and shrinking such a `Vec` keeps its pages resident. Elsewhere the
+/// `Vec` is shrunk.
 ///
 /// # Safety
 /// `target` must be valid for writing `bytes.len()` bytes.
@@ -209,9 +213,15 @@ pub(crate) unsafe fn move_from_end(mut bytes: Vec<u8>, target: *mut u8, piece: u
     let mut end = bytes.len();
     while end > 0 {
         let start = end.saturating_sub(piece);
-        std::ptr::copy_nonoverlapping(bytes.as_ptr().add(start), target.add(start), end - start);
-        bytes.truncate(start);
-        bytes.shrink_to_fit();
+        // Taken each time: shrinking may move the buffer.
+        let source = bytes.as_mut_ptr();
+        std::ptr::copy_nonoverlapping(source.add(start), target.add(start), end - start);
+        if cfg!(target_os = "linux") {
+            crate::writer::release_pages(source.add(start), end - start);
+        } else {
+            bytes.truncate(start);
+            bytes.shrink_to_fit();
+        }
         end = start;
     }
 }

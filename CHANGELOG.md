@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+- SFC and P21 output is written in pieces of about 4 MB and joined once,
+  instead of one buffer that doubled and copied itself as it grew. When a large
+  drawing had left free space in the heap, the buffer grew there and every old
+  copy stayed resident. On Linux each piece's pages are given back as soon as it
+  is copied into the result, and so are those of the result as it is handed to
+  Python. For a committed drawing of 670,698 entities, returning its 291 MB P21
+  peaked 509 MB above the document instead of 843 MB, and its 99 MB SFC 121 MB
+  instead of 255 MB. Output bytes are unchanged.
+
 - A typed feature takes 168 bytes instead of 488. `TypedFeature` boxes the
   variants larger than an arc (text, the five dimensions, labels, balloons,
   hatching and tiles, ellipse arcs, clothoids, placements, external symbols and
