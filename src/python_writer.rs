@@ -182,6 +182,40 @@ pub(crate) fn encode_python(
     Ok(bytes)
 }
 
+/// `bytes` as a Python `bytes` object without holding two whole copies of a
+/// large output. The object is filled from the end, a piece at a time, and
+/// `bytes` gives each piece back once it is copied: a large `Vec` is a mapping
+/// of its own, so shrinking it returns the pages, and the part of the new
+/// object not yet written takes no memory.
+pub(crate) fn into_python_bytes(py: Python<'_>, bytes: Vec<u8>) -> PyResult<Py<PyBytes>> {
+    // SAFETY: with a null pointer, PyBytes_FromStringAndSize returns a new,
+    // uninitialised object of `bytes.len()` bytes; every byte is written before
+    // the object is returned, through a pointer the object keeps valid.
+    unsafe {
+        let object = pyo3::ffi::PyBytes_FromStringAndSize(std::ptr::null(), bytes.len() as isize);
+        let object = Bound::from_owned_ptr_or_err(py, object)?.downcast_into_unchecked::<PyBytes>();
+        let target = pyo3::ffi::PyBytes_AsString(object.as_ptr()).cast::<u8>();
+        move_from_end(bytes, target, 16 << 20);
+        Ok(object.unbind())
+    }
+}
+
+/// Copies `bytes` to `target` from the end, `piece` bytes at a time, shrinking
+/// `bytes` after each piece.
+///
+/// # Safety
+/// `target` must be valid for writing `bytes.len()` bytes.
+pub(crate) unsafe fn move_from_end(mut bytes: Vec<u8>, target: *mut u8, piece: usize) {
+    let mut end = bytes.len();
+    while end > 0 {
+        let start = end.saturating_sub(piece);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr().add(start), target.add(start), end - start);
+        bytes.truncate(start);
+        bytes.shrink_to_fit();
+        end = start;
+    }
+}
+
 /// Validate a complete SFC parse result and return Shift-JIS/CP932 bytes.
 /// External SAF references require explicit opt-in; dependencies are not copied.
 /// literal_backslashes selects nonstandard CAD spelling and rejects ambiguous strings.
@@ -193,7 +227,7 @@ fn serialize_sfc(
     literal_backslashes: bool,
 ) -> PyResult<Py<PyBytes>> {
     let bytes = encode_python(parsed, allow_external_references, literal_backslashes)?;
-    Ok(PyBytes::new_bound(parsed.py(), &bytes).unbind())
+    into_python_bytes(parsed.py(), bytes)
 }
 
 /// Validate and atomically resave a complete SFC parse result to a file.
@@ -238,7 +272,7 @@ fn p21_bytes(parsed: &Bound<'_, PyDict>) -> PyResult<Vec<u8>> {
 
 #[pyfunction]
 fn serialize_p21(parsed: &Bound<'_, PyDict>) -> PyResult<Py<PyBytes>> {
-    Ok(PyBytes::new_bound(parsed.py(), &p21_bytes(parsed)?).unbind())
+    into_python_bytes(parsed.py(), p21_bytes(parsed)?)
 }
 
 #[pyfunction]

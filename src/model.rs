@@ -719,9 +719,12 @@ pub struct TextFontFeature {
     pub name: String,
 }
 
+/// The typed form of a feature. Variants larger than an arc are boxed: every
+/// entity of a document has one, and unboxed the enum took the size of a
+/// dimension (456 bytes) for each line and polyline as well.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypedFeature {
-    DrawingAttribute(DrawingAttributeFeature),
+    DrawingAttribute(Box<DrawingAttributeFeature>),
     DrawingSheet(DrawingSheetFeature),
     Layer(LayerFeature),
     PreDefinedFont(PreDefinedFontFeature),
@@ -731,29 +734,29 @@ pub enum TypedFeature {
     Width(WidthFeature),
     TextFont(TextFontFeature),
     SfigOrg(SfigOrgFeature),
-    SfigLocate(SfigLocateFeature),
-    ExternallyDefinedSymbol(ExternallyDefinedSymbolFeature),
-    LinearDim(LinearDimFeature),
-    CurveDim(CurveDimFeature),
-    AngularDim(AngularDimFeature),
-    RadiusDim(RadiusDimFeature),
-    DiameterDim(DiameterDimFeature),
-    Label(LabelFeature),
-    Balloon(BalloonFeature),
-    ExternallyDefinedHatch(ExternallyDefinedHatchFeature),
+    SfigLocate(Box<SfigLocateFeature>),
+    ExternallyDefinedSymbol(Box<ExternallyDefinedSymbolFeature>),
+    LinearDim(Box<LinearDimFeature>),
+    CurveDim(Box<CurveDimFeature>),
+    AngularDim(Box<AngularDimFeature>),
+    RadiusDim(Box<RadiusDimFeature>),
+    DiameterDim(Box<DiameterDimFeature>),
+    Label(Box<LabelFeature>),
+    Balloon(Box<BalloonFeature>),
+    ExternallyDefinedHatch(Box<ExternallyDefinedHatchFeature>),
     FillAreaStyleColour(FillAreaStyleColourFeature),
-    FillAreaStyleHatching(FillAreaStyleHatchingFeature),
-    FillAreaStyleTiles(FillAreaStyleTilesFeature),
+    FillAreaStyleHatching(Box<FillAreaStyleHatchingFeature>),
+    FillAreaStyleTiles(Box<FillAreaStyleTilesFeature>),
     PointMarker(PointMarkerFeature),
     Line(LineFeature),
     Polyline(PolylineFeature),
     Circle(CircleFeature),
     Arc(ArcFeature),
     Ellipse(EllipseFeature),
-    EllipseArc(EllipseArcFeature),
-    Text(TextFeature),
+    EllipseArc(Box<EllipseArcFeature>),
+    Text(Box<TextFeature>),
     Spline(SplineFeature),
-    Clothoid(ClothoidFeature),
+    Clothoid(Box<ClothoidFeature>),
     CompositeCurve(CompositeCurveFeature),
 }
 

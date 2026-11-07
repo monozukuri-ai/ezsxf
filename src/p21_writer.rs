@@ -987,7 +987,7 @@ fn generate(
         .typed_features
         .iter()
         .find_map(|f| match &f.feature {
-            TypedFeature::DrawingAttribute(a) => Some(a),
+            TypedFeature::DrawingAttribute(a) => Some(&**a),
             _ => None,
         });
     let revision = graph.drawing_title(title, &sheet.name);

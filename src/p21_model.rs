@@ -328,7 +328,7 @@ impl Parser<'_> {
                     definition_id,
                 });
             }
-            typed.insert(*id, TypedFeature::SfigLocate(placement));
+            typed.insert(*id, TypedFeature::SfigLocate(Box::new(placement)));
         }
         if let Some((id, params)) = graph.find("DRAWING_SHEET_REVISION").next() {
             if let Some(sheet) = graph.sheet(id, params) {

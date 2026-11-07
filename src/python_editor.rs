@@ -2,6 +2,7 @@
 
 use crate::editor::{number, string, SfcDocument};
 use crate::model::{FileFormat, Value};
+use crate::python_writer::into_python_bytes;
 use crate::writer::{write_bytes_atomic, SfcWriteOptions, WriteError};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -191,7 +192,7 @@ impl PythonSfcDocument {
             unsupported == "drop",
         )
         .map_err(error)?;
-        let bytes = PyBytes::new_bound(py, &bytes).unbind();
+        let bytes = into_python_bytes(py, bytes)?;
         if report {
             Ok((bytes, dropped).into_py(py))
         } else {
@@ -221,7 +222,7 @@ impl PythonSfcDocument {
     #[pyo3(signature = (*, file_name=None))]
     fn to_p2z_bytes(&self, py: Python<'_>, file_name: Option<&str>) -> PyResult<Py<PyBytes>> {
         let bytes = self.document.to_p2z_bytes(file_name).map_err(io_error)?;
-        Ok(PyBytes::new_bound(py, &bytes).unbind())
+        into_python_bytes(py, bytes)
     }
     fn save_p2z(&self, path: &Bound<'_, PyAny>) -> PyResult<()> {
         self.document
@@ -294,7 +295,7 @@ impl PythonSfcDocument {
                 literal_backslashes,
             })
             .map_err(error)?;
-        Ok(PyBytes::new_bound(py, &bytes).unbind())
+        into_python_bytes(py, bytes)
     }
     #[pyo3(signature = (path, *, allow_external_references=false, literal_backslashes=false))]
     fn save(

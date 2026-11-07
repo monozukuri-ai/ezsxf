@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+- A typed feature takes 168 bytes instead of 488. `TypedFeature` boxes the
+  variants larger than an arc (text, the five dimensions, labels, balloons,
+  hatching and tiles, ellipse arcs, clothoids, placements, external symbols and
+  hatches, and the drawing attribute), whose size every line and polyline paid
+  for as well. A committed drawing of 670,698 entities (99 MB of SFC) holds
+  736 MB instead of 941 MB. Rust code matching those variants now gets a `Box`.
+- `to_bytes`, `to_p21_bytes`, `to_p2z_bytes`, `serialize_sfc` and
+  `serialize_p21` hand their output to Python a piece at a time, freeing each
+  piece of the native buffer once copied, rather than copying it whole while
+  both are held.
+
 - `extend` turns each leaf into its record as it reads the batch, instead of
   first holding every leaf as a field map with lists of values, and moves the
   records into the document rather than copying them. A commit no longer holds

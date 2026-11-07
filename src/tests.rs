@@ -1510,8 +1510,8 @@ END-ISO-10303-21;",
         parse_sfc_text(&source, true).expect("quote inside backslash-quoted string should parse");
     assert!(output.document.typed_features.iter().any(|item| {
         matches!(
-            item.feature,
-            TypedFeature::Text(TextFeature { ref text, .. }) if text == "A'B"
+            &item.feature,
+            TypedFeature::Text(feature) if feature.text == "A'B"
         )
     }));
 }
@@ -1812,4 +1812,19 @@ fn reparse_against_expected_entities_keeps_them_or_gives_them_back() {
             _ => panic!("a different entity or count is reported"),
         }
     }
+}
+
+#[test]
+fn output_moves_to_python_in_pieces_from_the_end() {
+    let source: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
+    for piece in [1, 7, 999, 1000, 4096] {
+        let mut target = vec![0u8; source.len()];
+        // SAFETY: `target` holds `source.len()` bytes.
+        unsafe { crate::python_writer::move_from_end(source.clone(), target.as_mut_ptr(), piece) };
+        assert_eq!(target, source, "piece {piece}");
+    }
+    // SAFETY: nothing is written for an empty source.
+    unsafe {
+        crate::python_writer::move_from_end(Vec::new(), std::ptr::NonNull::dangling().as_ptr(), 7)
+    };
 }

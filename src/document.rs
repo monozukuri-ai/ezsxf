@@ -1082,9 +1082,11 @@ impl<'a> Parser<'a> {
         let params = &record.parameters;
 
         match keyword.as_str() {
-            "drawing_attribute_feature" => {
-                Some(parse_drawing_attribute_feature(params).map(TypedFeature::DrawingAttribute))
-            }
+            "drawing_attribute_feature" => Some(
+                parse_drawing_attribute_feature(params)
+                    .map(Box::new)
+                    .map(TypedFeature::DrawingAttribute),
+            ),
             "drawing_sheet_feature" => {
                 Some(parse_drawing_sheet_feature(params).map(TypedFeature::DrawingSheet))
             }
@@ -1106,32 +1108,54 @@ impl<'a> Parser<'a> {
                 Some(parse_text_font_feature(params).map(TypedFeature::TextFont))
             }
             "sfig_org_feature" => Some(parse_sfig_org_feature(params).map(TypedFeature::SfigOrg)),
-            "sfig_locate_feature" => {
-                Some(parse_sfig_locate_feature(params).map(TypedFeature::SfigLocate))
-            }
+            "sfig_locate_feature" => Some(
+                parse_sfig_locate_feature(params)
+                    .map(Box::new)
+                    .map(TypedFeature::SfigLocate),
+            ),
             "symbol_externally_defined_feature" | "externally_defined_symbol_feature" => Some(
                 parse_externally_defined_symbol_feature(params)
+                    .map(Box::new)
                     .map(TypedFeature::ExternallyDefinedSymbol),
             ),
-            "linear_dim_feature" => {
-                Some(parse_linear_dim_feature(params).map(TypedFeature::LinearDim))
-            }
-            "curve_dim_feature" => {
-                Some(parse_curve_dim_feature(params).map(TypedFeature::CurveDim))
-            }
-            "angular_dim_feature" => {
-                Some(parse_angular_dim_feature(params).map(TypedFeature::AngularDim))
-            }
-            "radius_dim_feature" => {
-                Some(parse_radius_dim_feature(params).map(TypedFeature::RadiusDim))
-            }
-            "diameter_dim_feature" => {
-                Some(parse_diameter_dim_feature(params).map(TypedFeature::DiameterDim))
-            }
-            "label_feature" => Some(parse_label_feature(params).map(TypedFeature::Label)),
-            "balloon_feature" => Some(parse_balloon_feature(params).map(TypedFeature::Balloon)),
+            "linear_dim_feature" => Some(
+                parse_linear_dim_feature(params)
+                    .map(Box::new)
+                    .map(TypedFeature::LinearDim),
+            ),
+            "curve_dim_feature" => Some(
+                parse_curve_dim_feature(params)
+                    .map(Box::new)
+                    .map(TypedFeature::CurveDim),
+            ),
+            "angular_dim_feature" => Some(
+                parse_angular_dim_feature(params)
+                    .map(Box::new)
+                    .map(TypedFeature::AngularDim),
+            ),
+            "radius_dim_feature" => Some(
+                parse_radius_dim_feature(params)
+                    .map(Box::new)
+                    .map(TypedFeature::RadiusDim),
+            ),
+            "diameter_dim_feature" => Some(
+                parse_diameter_dim_feature(params)
+                    .map(Box::new)
+                    .map(TypedFeature::DiameterDim),
+            ),
+            "label_feature" => Some(
+                parse_label_feature(params)
+                    .map(Box::new)
+                    .map(TypedFeature::Label),
+            ),
+            "balloon_feature" => Some(
+                parse_balloon_feature(params)
+                    .map(Box::new)
+                    .map(TypedFeature::Balloon),
+            ),
             "externally_defined_hatch_feature" => Some(
                 parse_externally_defined_hatch_feature(params)
+                    .map(Box::new)
                     .map(TypedFeature::ExternallyDefinedHatch),
             ),
             "fill_area_style_colour_feature" => Some(
@@ -1139,10 +1163,13 @@ impl<'a> Parser<'a> {
             ),
             "fill_area_style_hatching_feature" => Some(
                 parse_fill_area_style_hatching_feature(params)
+                    .map(Box::new)
                     .map(TypedFeature::FillAreaStyleHatching),
             ),
             "fill_area_style_tiles_hatching_feature" | "fill_area_style_tiles_feature" => Some(
-                parse_fill_area_style_tiles_feature(params).map(TypedFeature::FillAreaStyleTiles),
+                parse_fill_area_style_tiles_feature(params)
+                    .map(Box::new)
+                    .map(TypedFeature::FillAreaStyleTiles),
             ),
             "point_marker_feature" => {
                 Some(parse_point_marker_feature(params).map(TypedFeature::PointMarker))
@@ -1152,12 +1179,22 @@ impl<'a> Parser<'a> {
             "circle_feature" => Some(parse_circle_feature(params).map(TypedFeature::Circle)),
             "arc_feature" => Some(parse_arc_feature(params).map(TypedFeature::Arc)),
             "ellipse_feature" => Some(parse_ellipse_feature(params).map(TypedFeature::Ellipse)),
-            "ellipse_arc_feature" => {
-                Some(parse_ellipse_arc_feature(params).map(TypedFeature::EllipseArc))
-            }
-            "text_string_feature" => Some(parse_text_feature(params).map(TypedFeature::Text)),
+            "ellipse_arc_feature" => Some(
+                parse_ellipse_arc_feature(params)
+                    .map(Box::new)
+                    .map(TypedFeature::EllipseArc),
+            ),
+            "text_string_feature" => Some(
+                parse_text_feature(params)
+                    .map(Box::new)
+                    .map(TypedFeature::Text),
+            ),
             "spline_feature" => Some(parse_spline_feature(params).map(TypedFeature::Spline)),
-            "clothoid_feature" => Some(parse_clothoid_feature(params).map(TypedFeature::Clothoid)),
+            "clothoid_feature" => Some(
+                parse_clothoid_feature(params)
+                    .map(Box::new)
+                    .map(TypedFeature::Clothoid),
+            ),
             "composite_curve_feature" | "composite_curve_org_feature" => {
                 Some(parse_composite_curve_feature(params).map(TypedFeature::CompositeCurve))
             }
