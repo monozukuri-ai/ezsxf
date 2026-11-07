@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+- `extend` turns each leaf into its record as it reads the batch, instead of
+  first holding every leaf as a field map with lists of values, and moves the
+  records into the document rather than copying them. A commit no longer holds
+  a second copy of the records: its reparse compares each entity with the one
+  committed and keeps that, and the bytes go once decoded. The parser reads its
+  text in place rather than as a `Vec<char>` (four bytes a character), the UTF-8
+  check of an input no longer copies it, and SFC output is encoded to Shift-JIS
+  entity by entity rather than as one string plus a decoded copy for the check.
+  Converting a DWG whose partial drawing has 172,695 elements and 1.8 million
+  vertices to SFC went from 2.33 GB to 1.24 GB peak. Output bytes and error
+  messages are unchanged.
+- The `points` / `vertices` of a leaf may be one `array('d')` of
+  `x0, y0, x1, y1, ...`, holding a vertex in 16 bytes instead of a tuple of two
+  floats (104 bytes) until `extend` reads it; the drawing above then peaks at
+  1.05 GB.
+
 - Bundles no longer clone and reparse a large drawing. `save_bundle` emits the
   committed entities under the delivered header (a clone plus a reparse of the
   emitted SFC cost several times the drawing), and `to_p2z_bytes` /

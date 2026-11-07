@@ -2,6 +2,7 @@
 
 import re
 import unittest
+from array import array
 
 import ezsxf
 
@@ -518,6 +519,34 @@ class WriterRequestsV2Test(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported"):
             doc.to_p21_bytes(unsupported="ignore")
         self.assertEqual(doc.to_dict(), before)
+
+    def test_points_may_be_an_array_of_doubles(self):
+        # x0, y0, x1, y1, ... holds a large batch without a Python object per coordinate
+        points = [(0.0, 0.0), (10.5, 0.0), (10.5, 7.25), (0.0, 7.25)]
+        flat = array("d", [c for point in points for c in point])
+        listed, packed = document(), document()
+        listed.extend([{"kind": "polyline", "points": points}, {"kind": "fill", "outer": points}])
+        packed.extend(
+            [
+                {"kind": "polyline", "points": flat},
+                {"kind": "fill", "outer": [{"kind": "polyline", "points": flat + flat[:2]}]},
+            ]
+        )
+        reference = document()
+        reference.extend(
+            [
+                {"kind": "polyline", "points": points},
+                {"kind": "fill", "outer": [{"kind": "polyline", "points": points + points[:1]}]},
+            ]
+        )
+        self.assertEqual(packed.to_bytes(), reference.to_bytes())
+        self.assertEqual(listed.to_bytes(), reference.to_bytes())
+        with self.assertRaisesRegex(ValueError, "typecode 'd'"):
+            document().extend([{"kind": "polyline", "points": array("f", [0, 0, 1, 1])}])
+        with self.assertRaisesRegex(ValueError, "x, y pairs"):
+            document().extend([{"kind": "polyline", "points": array("d", [0, 0, 1])}])
+        with self.assertRaisesRegex(ValueError, "list or tuple"):
+            document().extend([{"kind": "polyline", "points": b"\0" * 16}])
 
 
 if __name__ == "__main__":

@@ -51,6 +51,11 @@ self-intersection, hole containment and winding certification is not performed.
 with `add_fill`/`add_hatch`. Its visibility controls the boundary when used by a
 fill, rather than creating a separate sheet placement.
 
+The `points` (and `vertices`) of a leaf may also be one `array('d')` of
+`x0, y0, x1, y1, ...`, which writes the same feature as the list of pairs. For
+large batches it holds a vertex in 16 bytes instead of a tuple of two floats
+(104 bytes), until `extend` turns the batch into records.
+
 Placement fields are `position=(0,0)`, `angle=0`, `scale=(1,1)` and `layer=1`.
 Every entry in a part's `placements` requires an explicit `position`; no extra
 origin instance is created. Positive unequal X/Y scales are supported. Zero,

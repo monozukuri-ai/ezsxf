@@ -8,7 +8,29 @@ use crate::writer::{validate_authored_record, WriteError};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub(crate) type Fields = BTreeMap<String, Value>;
-pub(crate) type Leaf = (String, Fields);
+
+/// A leaf feature: its kind and fields, or the record they make. The Python
+/// input is turned into records as it is read, so that a large batch is never
+/// held as field maps and value lists, which are several times its records.
+#[derive(Clone, Debug)]
+pub(crate) enum Leaf {
+    Fields(String, Fields),
+    /// `authored_record` of the fields; an error is reported when the leaf
+    /// is built, as for `Fields`.
+    Record(Result<Record, WriteError>),
+}
+
+impl Leaf {
+    pub(crate) fn authored(kind: &str, fields: &Fields) -> Self {
+        Leaf::Record(authored_record(kind, fields))
+    }
+    fn into_record(self) -> Result<Record, WriteError> {
+        match self {
+            Leaf::Fields(kind, fields) => authored_record(&kind, &fields),
+            Leaf::Record(record) => record,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct Placement {
@@ -160,7 +182,7 @@ impl Fragment<'_> {
     }
     fn boundary(
         &mut self,
-        leaves: &[Leaf],
+        leaves: Vec<Leaf>,
         codes: [i64; 3],
         visible: bool,
         closed: bool,
@@ -170,8 +192,8 @@ impl Fragment<'_> {
         }
         let mut records = Vec::new();
         let mut features = Vec::new();
-        for (kind, fields) in leaves {
-            let r = authored_record(kind, fields)?;
+        for leaf in leaves {
+            let r = leaf.into_record()?;
             let (_, f) = self.append(r, &mut records)?;
             if !crate::features::is_composite_curve_component(&f) {
                 return Err(error(
@@ -198,9 +220,11 @@ impl Fragment<'_> {
         self.definitions.extend(records);
         Ok((id, self.curve_code, polygon))
     }
+    /// Builds `element` into this fragment; its records move into the
+    /// fragment rather than being copied.
     fn build(
         &mut self,
-        element: &BatchElement,
+        element: BatchElement,
         depth: usize,
         roots: &mut Vec<EntityInstance>,
     ) -> Result<BatchId, WriteError> {
@@ -208,8 +232,8 @@ impl Fragment<'_> {
             return Err(error("Nested batch elements exceed depth 32"));
         }
         match element {
-            BatchElement::Feature((kind, fields)) => {
-                let (id, _) = self.append(authored_record(kind, fields)?, roots)?;
+            BatchElement::Feature(leaf) => {
+                let (id, _) = self.append(leaf.into_record()?, roots)?;
                 Ok(BatchId::Single(id))
             }
             BatchElement::Composite {
@@ -217,7 +241,7 @@ impl Fragment<'_> {
                 codes,
                 visible,
             } => Ok(BatchId::Single(
-                self.boundary(boundary, *codes, *visible, false)?.0,
+                self.boundary(boundary, codes, visible, false)?.0,
             )),
             BatchElement::Fill {
                 outer,
@@ -226,11 +250,11 @@ impl Fragment<'_> {
                 color,
                 patterns,
             } => {
-                let (_, outer, polygon) = self.boundary(outer, [*color, 1, 1], false, true)?;
+                let (_, outer, polygon) = self.boundary(outer, [color, 1, 1], false, true)?;
                 let mut polygons = vec![polygon];
                 let mut inner = Vec::new();
                 for hole in holes {
-                    let (_, code, polygon) = self.boundary(hole, [*color, 1, 1], false, true)?;
+                    let (_, code, polygon) = self.boundary(hole, [color, 1, 1], false, true)?;
                     inner.push(code);
                     polygons.push(polygon);
                 }
@@ -281,7 +305,7 @@ impl Fragment<'_> {
                 if name.starts_with("$$ATR") {
                     return Err(error("Reserved attribute group name"));
                 }
-                if self.known_names.contains_key(name) || self.own_names.contains_key(name) {
+                if self.known_names.contains_key(&name) || self.own_names.contains_key(&name) {
                     return Err(error(format!("Duplicate composite figure name {name:?}")));
                 }
                 if !matches!(kind, 1 | 3 | 4) {
@@ -289,7 +313,7 @@ impl Fragment<'_> {
                         "Batch figures support partial drawing (1), group (3), and part (4)",
                     ));
                 }
-                if depth > 0 && *kind == 1 {
+                if depth > 0 && kind == 1 {
                     return Err(error(
                         "A partial drawing cannot be nested inside another figure",
                     ));
@@ -299,14 +323,14 @@ impl Fragment<'_> {
                         "A figure needs nonempty elements and explicit placements",
                     ));
                 }
-                if *kind != 4 && placements.len() != 1 {
+                if kind != 4 && placements.len() != 1 {
                     return Err(error("Only drawing parts allow multiple placements"));
                 }
                 for (i, placement) in placements.iter().enumerate() {
                     crate::features::validate_placement_scale(placement.scale.0, placement.scale.1)
                         .map_err(|e| error(format!("placements[{i}]: {e}")))?;
                 }
-                if *kind == 3
+                if kind == 3
                     && placements.iter().any(|p| {
                         p.position != (0.0, 0.0) || p.angle != 0.0 || p.scale != (1.0, 1.0)
                     })
@@ -316,25 +340,25 @@ impl Fragment<'_> {
                 // Reserve the name before recursion, but do not allow recursive placements.
                 self.own_names.insert(name.clone(), 0);
                 let mut children = Vec::new();
-                for (i, child) in elements.iter().enumerate() {
+                for (i, child) in elements.into_iter().enumerate() {
                     self.build(child, depth + 1, &mut children)
                         .map_err(|e| error(format!("elements[{i}]: {e}")))?;
                 }
                 self.append(
-                    record("sfig_org_feature", vec![string(name), string(kind)]),
+                    record("sfig_org_feature", vec![string(&name), string(kind)]),
                     &mut children,
                 )?;
                 self.definitions.extend(children);
-                self.own_names.insert(name.clone(), *kind);
+                self.own_names.insert(name.clone(), kind);
                 let mut ids = Vec::new();
                 for (i, p) in placements.iter().enumerate() {
                     ids.push(
-                        self.append(p.record(name)?, roots)
+                        self.append(p.record(&name)?, roots)
                             .map_err(|e| error(format!("placements[{i}]: {e}")))?
                             .0,
                     );
                 }
-                if *kind == 4 {
+                if kind == 4 {
                     Ok(BatchId::Placements(ids))
                 } else {
                     Ok(BatchId::Single(ids[0]))
@@ -343,15 +367,15 @@ impl Fragment<'_> {
             BatchElement::Placement { name, placement } => {
                 let kind = self
                     .own_names
-                    .get(name)
-                    .or_else(|| self.known_names.get(name));
+                    .get(&name)
+                    .or_else(|| self.known_names.get(&name));
                 if kind != Some(&4) {
                     return Err(error(format!(
                         "Placement needs an earlier, nonrecursive drawing part {name:?}"
                     )));
                 }
                 Ok(BatchId::Single(
-                    self.append(placement.record(name)?, roots)?.0,
+                    self.append(placement.record(&name)?, roots)?.0,
                 ))
             }
         }
@@ -428,7 +452,7 @@ impl SfcDocument {
         let mut ids = Vec::with_capacity(elements.len());
         let mut rejected = Vec::new();
         let mut owners = HashMap::new();
-        for (index, element) in elements.iter().enumerate() {
+        for (index, element) in elements.into_iter().enumerate() {
             let mut fragment = Fragment {
                 next,
                 curve_code,
@@ -439,8 +463,8 @@ impl SfcDocument {
                 target_p21: self.target_p21,
             };
             let mut direct = Vec::new();
-            let built = element.as_ref().map_err(|s| error(s.clone())).and_then(|e| {
-                if let (Some(position), BatchElement::Placement { name, .. }) = (target_position, e) {
+            let built = element.map_err(error).and_then(|e| {
+                if let (Some(position), BatchElement::Placement { name, .. }) = (target_position, &e) {
                     if definition_positions.get(name.as_str()).is_some_and(|p| *p >= position) {
                         return Err(error("into would create a forward or recursive part reference"));
                     }
@@ -472,7 +496,6 @@ impl SfcDocument {
                 }
             }
         }
-        drop(elements);
         if !definitions.is_empty() || !roots.is_empty() {
             let mut candidate = self.commit_base();
             if let Some(target) = target {
@@ -538,7 +561,7 @@ mod tests {
         SfcDocument::new("drawing.sfc", "drawing", 297, 210, "2026-10-08").unwrap()
     }
     fn circle(radius: f64) -> BatchElement {
-        BatchElement::Feature((
+        BatchElement::Feature(Leaf::Fields(
             "circle".into(),
             BTreeMap::from([("radius".into(), Value::Real(radius))]),
         ))
@@ -619,7 +642,7 @@ mod tests {
         let mut document = doc();
         document.target_p21 = true;
         let before = document.output.clone();
-        let e = BatchElement::Feature(("line".into(), BTreeMap::new()));
+        let e = BatchElement::Feature(Leaf::Fields("line".into(), BTreeMap::new()));
         let message = document
             .extend_structured(vec![Ok(e)], false, None)
             .unwrap_err()

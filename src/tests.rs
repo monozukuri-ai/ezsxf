@@ -1757,3 +1757,59 @@ fn synthesizes_a_sheet_for_recovered_features_and_accepts_empty_sheet_names() {
     assert_eq!(sheet.entity_id, 99);
     assert_eq!(sheet.component_ids, vec![1]);
 }
+
+#[test]
+fn shift_jis_errors_keep_the_order_of_the_whole_text() {
+    // The text is encoded piece by piece, yet an unrepresentable character
+    // still wins over one that would change, and a parameter error over both.
+    let mut changed = writer_fixture();
+    changed.document.header.entities[1].parameters[0] = Value::String("¥.sfc".into());
+    let mut both = changed.clone();
+    writer_record(&mut both, 900).parameters[0] = Value::String("emoji 😀".into());
+    assert!(serialize_sfc(&both, writer_options())
+        .unwrap_err()
+        .0
+        .contains("not representable"));
+    assert!(serialize_sfc(&changed, writer_options())
+        .unwrap_err()
+        .0
+        .contains("change SFC character"));
+    writer_record(&mut changed, 900).parameters[0] = Value::String("nul\0".into());
+    assert!(serialize_sfc(&changed, writer_options())
+        .unwrap_err()
+        .0
+        .contains("NUL"));
+}
+
+#[test]
+fn commit_validation_keeps_the_entities_and_matches_encode_document() {
+    let output = writer_fixture();
+    let (_, expected) = crate::writer::encode_document(&output.document, writer_options()).unwrap();
+    let validated =
+        crate::writer::validate_document(output.document.clone(), writer_options()).unwrap();
+    assert_eq!(validated, expected);
+}
+
+#[test]
+fn reparse_against_expected_entities_keeps_them_or_gives_them_back() {
+    let output = writer_fixture();
+    let bytes = serialize_sfc(&output, writer_options()).unwrap();
+    let (text, _) = crate::parser::decode_bytes(FileFormat::Sfc, &bytes, true).unwrap();
+    let entities = output.document.entities.clone();
+    let parsed = Parser::new(&text, FileFormat::Sfc, true)
+        .parse_expecting(entities)
+        .unwrap_or_else(|_| panic!("the entities written are those read"));
+    assert_eq!(parsed, parse_sfc_text(&text, true).unwrap());
+
+    let mut different = output.document.entities.clone();
+    let EntityBody::Simple(record) = &mut different[3].body else {
+        unreachable!()
+    };
+    record.parameters[0] = Value::String("other".into());
+    for expected in [different, output.document.entities[1..].to_vec()] {
+        match Parser::new(&text, FileFormat::Sfc, true).parse_expecting(expected.clone()) {
+            Err(crate::parser::Reparse::Differs(given_back)) => assert_eq!(given_back, expected),
+            _ => panic!("a different entity or count is reported"),
+        }
+    }
+}

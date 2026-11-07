@@ -28,7 +28,9 @@ struct Snapshot {
 
 pub(crate) struct Parser<'a> {
     input: &'a str,
-    chars: Vec<char>,
+    /// Byte offset of the next character in `input`, always at a character
+    /// boundary. (A `Vec<char>` of the input took four bytes a character:
+    /// 300 MB for a 75 MB drawing.)
     index: usize,
     line: usize,
     column: usize,
@@ -36,13 +38,26 @@ pub(crate) struct Parser<'a> {
     strict: bool,
     warnings: Vec<ParseWarning>,
     salvage_warning_counts: HashMap<String, usize>,
+    /// `parse_expecting`: the SFC entities the input must give. Each parsed
+    /// entity is compared with its counterpart and dropped, and these become
+    /// the document's, so a reparse never holds two copies of the records.
+    expected: Option<Vec<EntityInstance>>,
+    expected_seen: usize,
+    expected_differs: bool,
+}
+
+/// Why `Parser::parse_expecting` gave no output.
+pub(crate) enum Reparse {
+    Failed(ParseError),
+    /// An entity was not the one expected (or there were more or fewer):
+    /// the expected entities, given back.
+    Differs(Vec<EntityInstance>),
 }
 
 impl<'a> Parser<'a> {
     pub(crate) fn new(input: &'a str, format: FileFormat, strict: bool) -> Self {
         Self {
             input,
-            chars: input.chars().collect(),
             index: 0,
             line: 1,
             column: 1,
@@ -50,10 +65,33 @@ impl<'a> Parser<'a> {
             strict,
             warnings: Vec::new(),
             salvage_warning_counts: HashMap::new(),
+            expected: None,
+            expected_seen: 0,
+            expected_differs: false,
         }
     }
 
     fn parse(mut self) -> Result<ParseOutput, ParseError> {
+        self.parse_document()
+    }
+
+    /// `parse` of an SFC input that must give `expected`, whose entities the
+    /// output then holds. On a difference the caller gets them back.
+    pub(crate) fn parse_expecting(
+        mut self,
+        expected: Vec<EntityInstance>,
+    ) -> Result<ParseOutput, Reparse> {
+        self.expected = Some(expected);
+        match self.parse_document() {
+            Ok(output) => Ok(output),
+            Err(_) if self.expected_differs => Err(Reparse::Differs(
+                self.expected.take().expect("kept on a difference"),
+            )),
+            Err(error) => Err(Reparse::Failed(error)),
+        }
+    }
+
+    fn parse_document(&mut self) -> Result<ParseOutput, ParseError> {
         // 非strictでは、破損ファイル(先頭上書き・部分暗号化・ビット化け)から
         // 読める区間を回収する。プロローグ/HEADER/DATAキーワード/トレーラの
         // 損傷は次のアンカー(HEADER・DATA・最初のレコード)まで読み飛ばし、
@@ -143,10 +181,17 @@ impl<'a> Parser<'a> {
                 );
             }
         }
-        let entities = match self.format {
+        let mut entities = match self.format {
             FileFormat::P21 => self.parse_p21_records()?,
             FileFormat::Sfc => self.parse_sfc_records()?,
         };
+        if let Some(expected) = &self.expected {
+            if self.expected_differs || self.expected_seen != expected.len() {
+                self.expected_differs = true;
+                return Err(self.error_here("Reparsed entities differ from those expected"));
+            }
+            entities = self.expected.take().expect("checked");
+        }
         self.skip_ws();
         let trailer_error = 'trailer: {
             if let Err(error) = self.consume_literal_ci("END-ISO-10303-21") {
@@ -197,7 +242,7 @@ impl<'a> Parser<'a> {
 
         Ok(ParseOutput {
             document,
-            warnings: self.warnings,
+            warnings: std::mem::take(&mut self.warnings),
         })
     }
 
@@ -278,11 +323,7 @@ impl<'a> Parser<'a> {
             }
             self.restore(snapshot);
             if self.peek_char() == Some('#')
-                && (self.index == 0
-                    || matches!(
-                        self.chars.get(self.index.wrapping_sub(1)),
-                        Some('\n' | '\r')
-                    ))
+                && (self.index == 0 || matches!(self.previous_char(), Some('\n' | '\r')))
             {
                 return true;
             }
@@ -335,7 +376,15 @@ impl<'a> Parser<'a> {
                             ),
                         )?;
                     }
-                    entities.push(entity);
+                    match &self.expected {
+                        Some(expected) => {
+                            if expected.get(self.expected_seen) != Some(&entity) {
+                                self.expected_differs = true;
+                            }
+                            self.expected_seen += 1;
+                        }
+                        None => entities.push(entity),
+                    }
                 }
                 Err(error) if !self.strict => {
                     self.push_warning(
@@ -406,12 +455,8 @@ impl<'a> Parser<'a> {
             if self.is_eof() {
                 return None;
             }
-            let at_word_boundary = self.index == 0
-                || !self
-                    .chars
-                    .get(self.index.wrapping_sub(1))
-                    .copied()
-                    .is_some_and(is_keyword_char);
+            let at_word_boundary =
+                self.index == 0 || !self.previous_char().is_some_and(is_keyword_char);
             if at_word_boundary {
                 let snapshot = self.snapshot();
                 if self.try_consume_keyword_ci("HEADER") {
@@ -446,16 +491,8 @@ impl<'a> Parser<'a> {
                 }
                 FileFormat::P21 => {
                     if self.peek_char() == Some('#')
-                        && (self.index == 0
-                            || matches!(
-                                self.chars.get(self.index.wrapping_sub(1)),
-                                Some('\n' | '\r')
-                            ))
-                        && self
-                            .chars
-                            .get(self.index + 1)
-                            .copied()
-                            .is_some_and(|ch| ch.is_ascii_digit())
+                        && (self.index == 0 || matches!(self.previous_char(), Some('\n' | '\r')))
+                        && self.peek_next_char().is_some_and(|ch| ch.is_ascii_digit())
                     {
                         return Some(SalvageAnchor::Records);
                     }
@@ -1004,20 +1041,26 @@ impl<'a> Parser<'a> {
     }
 
     fn is_eof(&self) -> bool {
-        self.index >= self.chars.len()
+        self.index >= self.input.len()
     }
 
     fn peek_char(&self) -> Option<char> {
-        self.chars.get(self.index).copied()
+        self.input[self.index..].chars().next()
     }
 
     fn peek_next_char(&self) -> Option<char> {
-        self.chars.get(self.index + 1).copied()
+        let mut rest = self.input[self.index..].chars();
+        rest.next();
+        rest.next()
+    }
+
+    fn previous_char(&self) -> Option<char> {
+        self.input[..self.index].chars().next_back()
     }
 
     fn advance_char(&mut self) {
         if let Some(ch) = self.peek_char() {
-            self.index += 1;
+            self.index += ch.len_utf8();
             if ch == '\n' {
                 self.line += 1;
                 self.column = 1;
@@ -1248,8 +1291,9 @@ pub(crate) fn decode_bytes(
     bytes: &[u8],
     strict: bool,
 ) -> Result<(String, Option<ParseWarning>), ParseError> {
-    match String::from_utf8(bytes.to_vec()) {
-        Ok(text) => Ok((text, None)),
+    // Checked in place: a copy for the check was dropped again for Shift-JIS.
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Ok((text.to_owned(), None)),
         Err(_) if format == FileFormat::Sfc => {
             let (decoded, had_errors) = SHIFT_JIS.decode_without_bom_handling(bytes);
             if !had_errors {

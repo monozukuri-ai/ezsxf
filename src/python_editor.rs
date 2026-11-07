@@ -5,7 +5,8 @@ use crate::model::{FileFormat, Value};
 use crate::writer::{write_bytes_atomic, SfcWriteOptions, WriteError};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
+use pyo3::sync::GILOnceCell;
+use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple, PyType};
 use std::collections::BTreeMap;
 
 fn error(error: WriteError) -> PyErr {
@@ -68,6 +69,57 @@ pub(crate) fn points(value: &Bound<'_, PyAny>) -> PyResult<Value> {
         .map(Value::List)
 }
 
+/// A `points`/`vertices` field: pairs as for `points`, or an `array('d')`
+/// (`flat_points`).
+pub(crate) fn vertex_list(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+    match flat_points(value)? {
+        Some(points) => Ok(points),
+        None => points(value),
+    }
+}
+
+/// Points given as `array('d', [x0, y0, x1, y1, ...])`: the same points as a
+/// list of pairs, without a Python object for every coordinate (a vertex took
+/// 104 bytes as a tuple of two floats, 16 in the array). `None` for anything
+/// that is not an `array.array`, which `points` checks as before. (The buffer
+/// protocol is not in the stable ABI of the Pythons the wheel supports.)
+fn flat_points(value: &Bound<'_, PyAny>) -> PyResult<Option<Value>> {
+    static ARRAY: GILOnceCell<Py<PyType>> = GILOnceCell::new();
+    let py = value.py();
+    let array = ARRAY.get_or_try_init(py, || -> PyResult<_> {
+        Ok(py
+            .import_bound("array")?
+            .getattr("array")?
+            .downcast_into::<PyType>()?
+            .unbind())
+    })?;
+    if !value.is_instance(array.bind(py))? {
+        return Ok(None);
+    }
+    if value.getattr("typecode")?.extract::<String>()? != "d" {
+        return Err(PyTypeError::new_err(
+            "A points array must have typecode 'd'",
+        ));
+    }
+    let bytes = value.call_method0("tobytes")?;
+    let bytes = bytes.downcast::<PyBytes>()?.as_bytes();
+    if bytes.len() % 16 != 0 {
+        return Err(PyValueError::new_err("A points array must hold x, y pairs"));
+    }
+    let coordinate = |b: &[u8]| f64::from_ne_bytes(b.try_into().expect("eight bytes"));
+    Ok(Some(Value::List(
+        bytes
+            .chunks_exact(16)
+            .map(|pair| {
+                Value::List(vec![
+                    Value::Real(coordinate(&pair[..8])),
+                    Value::Real(coordinate(&pair[8..])),
+                ])
+            })
+            .collect(),
+    )))
+}
+
 pub(crate) fn fields_from_dict(
     fields: &Bound<'_, PyDict>,
     skip_kind: bool,
@@ -79,7 +131,7 @@ pub(crate) fn fields_from_dict(
             continue;
         }
         let value = if matches!(key.as_str(), "points" | "vertices") {
-            points(&value)?
+            vertex_list(&value)?
         } else if matches!(key.as_str(), "start" | "end" | "center" | "anchor") {
             if !value.is_instance_of::<PyList>() && !value.is_instance_of::<PyTuple>() {
                 return Err(PyTypeError::new_err(format!(
@@ -635,7 +687,7 @@ impl PythonSfcDocument {
             for (key, value) in changes {
                 let key = key.extract::<String>()?;
                 let value = if matches!(key.as_str(), "points" | "vertices") {
-                    points(&value)?
+                    vertex_list(&value)?
                 } else {
                     scalar(&value)?
                 };

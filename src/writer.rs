@@ -9,7 +9,7 @@ use encoding_rs::SHIFT_JIS;
 
 use crate::features::{required_sfc_version, validate_sfc_semantic_string};
 use crate::model::*;
-use crate::parser::parse_from_bytes;
+use crate::parser::{decode_bytes, parse_from_bytes, Parser, Reparse};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SfcWriteOptions {
@@ -160,6 +160,59 @@ pub(crate) fn encode_document(
     Ok((bytes, validated))
 }
 
+/// [`encode_document`] for a document that is not needed afterwards and whose
+/// bytes are not wanted (a commit): the bytes go once decoded, and the reparse
+/// compares each entity with the document's and keeps that one, instead of
+/// holding a second copy of every record. On any difference the document is
+/// checked again by `encode_document`, so the outcome and the message are the
+/// same.
+pub(crate) fn validate_document(
+    document: ParsedDocument,
+    options: SfcWriteOptions,
+) -> Result<ParseOutput, WriteError> {
+    let invalid = |error: ParseError| fail(format!("SFC output validation failed: {error}"));
+    let bytes = emit_document(&document, options)?;
+    let (text, encoding_warning) = decode_bytes(FileFormat::Sfc, &bytes, true).map_err(invalid)?;
+    drop(bytes);
+    let ParsedDocument {
+        format,
+        header,
+        entities,
+        ..
+    } = document;
+    let mut validated = match Parser::new(&text, FileFormat::Sfc, true).parse_expecting(entities) {
+        Ok(output) => output,
+        Err(Reparse::Failed(error)) => return Err(invalid(error)),
+        Err(Reparse::Differs(entities)) => {
+            let document = ParsedDocument {
+                format,
+                header,
+                entities,
+                typed_features: Vec::new(),
+                sfc_model: None,
+            };
+            return encode_document(&document, options).map(|(_, output)| output);
+        }
+    };
+    drop(text);
+    if let Some(warning) = encoding_warning {
+        validated.warnings.push(warning);
+    }
+    if let Some(warning) = validated.warnings.first() {
+        return Err(fail(format!(
+            "SFC output validation failed: {}: {}",
+            warning.code, warning.message
+        )));
+    }
+    if validated.document.header != header
+        || validated.document.typed_features.len() != validated.document.entities.len()
+    {
+        return Err(fail("SFC output changed or omitted entity/header values"));
+    }
+    reject_external_references(&validated.document, options)?;
+    Ok(validated)
+}
+
 /// Serialize a document that already passed [`encode_document`] with the
 /// default spelling. Emitting is deterministic, so reparsing the same bytes
 /// again would only hold a second copy of a large drawing in memory.
@@ -213,6 +266,7 @@ pub(crate) fn emit_sfc_text(
     entities: &[EntityInstance],
     options: SfcWriteOptions,
 ) -> Result<Vec<u8>, WriteError> {
+    let mut out = ShiftJisText::default();
     let mut text = String::from("ISO-10303-21;\r\nHEADER;\r\n");
     for record in &header.entities {
         keyword(&record.keyword)?;
@@ -222,6 +276,7 @@ pub(crate) fn emit_sfc_text(
         text.push_str(");\r\n");
     }
     text.push_str("ENDSEC;\r\nDATA;\r\n");
+    out.push(&mut text);
     for entity in entities {
         if entity.id < 0 {
             return Err(fail(format!("Invalid SFC entity ID #{}", entity.id)));
@@ -268,19 +323,48 @@ pub(crate) fn emit_sfc_text(
         }
         validate_vertex_counts(record)?;
         write!(text, ")\r\n{}*/\r\n", tag.marker()).unwrap();
+        out.push(&mut text);
     }
     text.push_str("ENDSEC;\r\nEND-ISO-10303-21;\r\n");
-    let (bytes, _, had_errors) = SHIFT_JIS.encode(&text);
-    if had_errors {
-        return Err(fail(
-            "SFC contains characters not representable in Shift-JIS/CP932",
-        ));
+    out.push(&mut text);
+    out.finish()
+}
+
+/// Shift-JIS bytes of SFC text that arrives in pieces, so that a large drawing
+/// is never held as one string, nor as its decoded copy for the check. Every
+/// piece ends with an ASCII line break and Shift-JIS keeps no state between
+/// characters, so the bytes and the errors are those of the whole text: a
+/// character that cannot be encoded first, then one that would not decode to
+/// itself.
+#[derive(Default)]
+struct ShiftJisText {
+    bytes: Vec<u8>,
+    unmappable: bool,
+    changed: bool,
+}
+
+impl ShiftJisText {
+    /// Encodes `text` and clears it.
+    fn push(&mut self, text: &mut String) {
+        let (bytes, _, had_errors) = SHIFT_JIS.encode(text);
+        self.unmappable |= had_errors;
+        let (decoded, had_errors) = SHIFT_JIS.decode_without_bom_handling(&bytes);
+        self.changed |= had_errors || decoded != text.as_str();
+        self.bytes.extend_from_slice(&bytes);
+        text.clear();
     }
-    let (decoded, had_errors) = SHIFT_JIS.decode_without_bom_handling(&bytes);
-    if had_errors || decoded != text {
-        return Err(fail("Shift-JIS encoding would change SFC character values"));
+
+    fn finish(self) -> Result<Vec<u8>, WriteError> {
+        if self.unmappable {
+            return Err(fail(
+                "SFC contains characters not representable in Shift-JIS/CP932",
+            ));
+        }
+        if self.changed {
+            return Err(fail("Shift-JIS encoding would change SFC character values"));
+        }
+        Ok(self.bytes)
     }
-    Ok(bytes.into_owned())
 }
 
 /// Validate an authored record independently, before the one document-wide

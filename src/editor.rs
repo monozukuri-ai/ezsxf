@@ -2,7 +2,7 @@
 
 use crate::model::*;
 use crate::writer::{
-    encode_document, serialize_sfc, serialize_validated, SfcWriteOptions, WriteError,
+    serialize_sfc, serialize_validated, validate_document, SfcWriteOptions, WriteError,
 };
 use std::collections::BTreeMap;
 
@@ -40,15 +40,14 @@ pub(crate) fn instance(id: i64, record: Record) -> EntityInstance {
         body: EntityBody::Simple(record),
     }
 }
-fn validate(document: &ParsedDocument) -> Result<ParseOutput, WriteError> {
-    encode_document(
+fn validate(document: ParsedDocument) -> Result<ParseOutput, WriteError> {
+    validate_document(
         document,
         SfcWriteOptions {
             allow_external_references: true,
             ..SfcWriteOptions::default()
         },
     )
-    .map(|(_, output)| output)
 }
 pub(crate) fn basic(keyword: &str) -> bool {
     matches!(
@@ -158,7 +157,7 @@ impl SfcDocument {
             sfc_model: None,
         };
         Ok(Self {
-            output: validate(&document)?,
+            output: validate(document)?,
             saf: None,
             dependencies: BTreeMap::new(),
             target_p21: false,
@@ -201,7 +200,7 @@ impl SfcDocument {
         }
     }
     pub(crate) fn commit(&mut self, document: ParsedDocument) -> Result<(), WriteError> {
-        let output = validate(&document)?;
+        let output = validate(document)?;
         if self.target_p21 {
             if let Some((id, reason)) = crate::p21_writer::p21_issues(&output).first() {
                 return Err(error(format!("Entity #{id}: {reason}")));

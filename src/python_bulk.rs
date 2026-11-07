@@ -79,7 +79,7 @@ fn boundary(value: &Bound<'_, PyAny>) -> PyResult<Vec<Leaf>> {
                     let d = v.downcast::<PyDict>()?;
                     let kind = required(d, "kind")?.extract::<String>()?;
                     let fields = crate::python_editor::fields_from_dict(d, true)?;
-                    Ok((kind, fields))
+                    Ok(Leaf::authored(&kind, &fields))
                 }
                 .map_err(|e: PyErr| err(format!("boundary[{i}]: {e}")))
             })
@@ -95,9 +95,9 @@ fn boundary(value: &Bound<'_, PyAny>) -> PyResult<Vec<Leaf>> {
                 .map(|(x, y)| Value::List(vec![Value::Real(x), Value::Real(y)]))
                 .collect(),
         );
-        Ok(vec![(
-            "polyline".into(),
-            BTreeMap::from([("points".into(), points)]),
+        Ok(vec![Leaf::authored(
+            "polyline",
+            &BTreeMap::from([("points".into(), points)]),
         )])
     }
 }
@@ -241,6 +241,11 @@ pub(crate) fn element(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<BatchE
                 placement: placement(d, false)?,
             }
         }
-        _ => BatchElement::Feature((kind, crate::python_editor::fields_from_dict(d, true)?)),
+        // The record rather than the fields: a large batch is never held as
+        // field maps and value lists (a vertex was a list of two values here).
+        _ => BatchElement::Feature(Leaf::authored(
+            &kind,
+            &crate::python_editor::fields_from_dict(d, true)?,
+        )),
     })
 }

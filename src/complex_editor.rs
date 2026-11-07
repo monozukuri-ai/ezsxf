@@ -232,7 +232,11 @@ impl SfcDocument {
         let elements = elements
             .iter()
             .cloned()
-            .map(|leaf| Ok(crate::bulk_editor::BatchElement::Feature(leaf)))
+            .map(|(kind, fields)| {
+                Ok(crate::bulk_editor::BatchElement::Feature(
+                    crate::bulk_editor::Leaf::Fields(kind, fields),
+                ))
+            })
             .collect::<Vec<_>>();
         Ok(self
             .extend_structured(elements, false, None)?
